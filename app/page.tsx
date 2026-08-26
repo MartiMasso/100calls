@@ -1,7 +1,7 @@
 "use client";
 
 import type { Session } from "@supabase/supabase-js";
-import { FormEvent, useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { supabase } from "@/lib/supabase";
 
 type View = "radar" | "contacts" | "messages" | "learnings";
@@ -18,6 +18,31 @@ type Contact = {
   type: "Potential customer" | "Founder" | "Expert";
   color: string;
   warm: string;
+  message?: string;
+  sourceUrl?: string;
+  aiGenerated?: boolean;
+};
+
+type ResearchStrategy = {
+  summary: string;
+  questions: string[];
+  model: string;
+};
+
+type ResearchResponse = ResearchStrategy & {
+  profiles: Array<{
+    name: string;
+    initials: string;
+    role: string;
+    company: string;
+    reason: string;
+    angle: string;
+    fit: number;
+    type: Contact["type"];
+    searchPath: string;
+    message: string;
+    sourceUrl: string;
+  }>;
 };
 
 const primaryContacts: Contact[] = [
@@ -62,48 +87,6 @@ const primaryContacts: Contact[] = [
   },
 ];
 
-const discoveredContacts: Contact[] = [
-  {
-    id: 4,
-    initials: "AG",
-    name: "Alba Gómez",
-    role: "Head of Finance",
-    company: "Factorial",
-    reason: "She understands the financial operations of growing companies.",
-    angle: "Test whether late payments are a recurring priority or a seasonal problem.",
-    fit: 86,
-    type: "Potential customer",
-    color: "yellow",
-    warm: "1 mutual contact",
-  },
-  {
-    id: 5,
-    initials: "DP",
-    name: "Diego Pardo",
-    role: "Fintech advisor",
-    company: "SeedRocket",
-    reason: "He has advised 20+ early-stage fintech startups.",
-    angle: "Ask him about recurring failure patterns and for introductions to two especially critical profiles.",
-    fit: 84,
-    type: "Expert",
-    color: "lilac",
-    warm: "Warm introduction possible through Marta",
-  },
-  {
-    id: 6,
-    initials: "CN",
-    name: "Clara Navarro",
-    role: "CEO",
-    company: "Studio Norte",
-    reason: "She runs a service business with recurring payments.",
-    angle: "Reconstruct her latest late payment: what happened, what it cost, and how she resolved it.",
-    fit: 81,
-    type: "Potential customer",
-    color: "pink",
-    warm: "Direct contact",
-  },
-];
-
 const tabs: { id: View; label: string; icon: string }[] = [
   { id: "radar", label: "Radar", icon: "◐" },
   { id: "contacts", label: "Contacts", icon: "☷" },
@@ -118,8 +101,12 @@ export default function Home() {
     typeof window !== "undefined" && new URLSearchParams(window.location.search).get("mode") === "reset"
   );
   const [showAccount, setShowAccount] = useState(false);
+  const accountMenuRef = useRef<HTMLDivElement>(null);
   const [view, setView] = useState<View>("radar");
   const [selected, setSelected] = useState<Contact | null>(null);
+  const [aiContacts, setAiContacts] = useState<Contact[]>([]);
+  const [strategy, setStrategy] = useState<ResearchStrategy | null>(null);
+  const [aiError, setAiError] = useState("");
   const [discovered, setDiscovered] = useState(false);
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [contacted, setContacted] = useState<number[]>([2]);
@@ -155,10 +142,7 @@ export default function Home() {
     };
   }, []);
 
-  const contacts = useMemo(
-    () => discovered ? [...primaryContacts, ...discoveredContacts] : primaryContacts,
-    [discovered]
-  );
+  const contacts = useMemo(() => aiContacts.length ? aiContacts : primaryContacts, [aiContacts]);
   const filteredContacts = useMemo(() => contacts.filter((contact) => {
     const matchesType = filter === "All" || contact.type === filter;
     const haystack = `${contact.name} ${contact.role} ${contact.company}`.toLowerCase();
@@ -170,17 +154,59 @@ export default function Home() {
     window.setTimeout(() => setToast(""), 2600);
   };
 
-  const findContacts = () => {
-    if (discovered) {
+  const findContacts = async (refresh = false) => {
+    if (discovered && !refresh) {
       setView("contacts");
       return;
     }
+
     setIsDiscovering(true);
-    window.setTimeout(() => {
+    setAiError("");
+    try {
+      const response = await fetch("/api/ai/research", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session?.access_token ?? ""}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ mission }),
+      });
+      const result = await response.json() as ResearchResponse | { error?: string };
+      if (!response.ok || !("profiles" in result)) {
+        throw new Error("error" in result && result.error ? result.error : "AI research could not be completed.");
+      }
+
+      const colors = ["coral", "mint", "blue", "yellow", "lilac", "pink"];
+      const researchedContacts: Contact[] = result.profiles.map((profile, index) => ({
+        id: 1000 + index,
+        initials: profile.initials,
+        name: profile.name,
+        role: profile.role,
+        company: profile.company,
+        reason: profile.reason,
+        angle: profile.angle,
+        fit: profile.fit,
+        type: profile.type,
+        color: colors[index % colors.length],
+        warm: profile.searchPath,
+        message: profile.message,
+        sourceUrl: profile.sourceUrl,
+        aiGenerated: true,
+      }));
+
+      setAiContacts(researchedContacts);
+      setStrategy({ summary: result.summary, questions: result.questions, model: result.model });
       setDiscovered(true);
+      setSelected(null);
+      setContacted([]);
+      notify(`${researchedContacts.length} verified profiles found`);
+    } catch (researchError) {
+      const message = researchError instanceof Error ? researchError.message : "AI research could not be completed.";
+      setAiError(message);
+      notify("AI research needs your attention");
+    } finally {
       setIsDiscovering(false);
-      notify("3 new contacts found");
-    }, 900);
+    }
   };
 
   const markContacted = (id: number) => {
@@ -199,11 +225,14 @@ export default function Home() {
     });
     setShowMission(false);
     setDiscovered(false);
+    setAiContacts([]);
+    setStrategy(null);
+    setAiError("");
     notify("New mission ready");
   };
 
   const copyMessage = async (contact: Contact) => {
-    const message = `Hi ${contact.name.split(" ")[0]}, I'm exploring a way to help SMBs reduce late payments. Your experience at ${contact.company} feels especially relevant. I'm not trying to sell you anything—would you be open to a 20-minute conversation so I can test what I'm learning?`;
+    const message = contact.message ?? `Hi ${contact.name.split(" ")[0]}, I'm exploring ${mission.title.toLowerCase()}. Your experience at ${contact.company} feels especially relevant. I'm not trying to sell you anything—would you be open to a 20-minute conversation so I can test what I'm learning?`;
     try { await navigator.clipboard.writeText(message); } catch { /* Clipboard can be unavailable in previews. */ }
     notify("Message copied");
   };
@@ -218,6 +247,24 @@ export default function Home() {
     await supabase.auth.signOut();
     setShowAccount(false);
   };
+
+  useEffect(() => {
+    if (!showAccount) return;
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      if (!accountMenuRef.current?.contains(event.target as Node)) setShowAccount(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowAccount(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showAccount]);
 
   if (authLoading) return <AuthLoading />;
 
@@ -265,7 +312,7 @@ export default function Home() {
       </div>
 
       <section className="workspace">
-        <div className="account-menu-wrap">
+        <div className="account-menu-wrap" ref={accountMenuRef}>
           <button className="account-button" onClick={() => setShowAccount((open) => !open)} aria-expanded={showAccount} aria-label="Open account menu">
             <span>{accountInitials}</span><small>{accountEmail}</small><b>⌄</b>
           </button>
@@ -284,7 +331,9 @@ export default function Home() {
             mission={mission}
             isDiscovering={isDiscovering}
             discovered={discovered}
-            onFind={findContacts}
+            strategy={strategy}
+            aiError={aiError}
+            onFind={() => findContacts(false)}
             onSelect={setSelected}
             onViewAll={() => setView("contacts")}
             onEditMission={() => setShowMission(true)}
@@ -301,7 +350,7 @@ export default function Home() {
             onQuery={setQuery}
             onFilter={setFilter}
             onSelect={setSelected}
-            onFind={findContacts}
+            onFind={() => findContacts(true)}
           />
         )}
 
@@ -328,11 +377,13 @@ export default function Home() {
   );
 }
 
-function Radar({ contacts, mission, isDiscovering, discovered, onFind, onSelect, onViewAll, onEditMission }: {
+function Radar({ contacts, mission, isDiscovering, discovered, strategy, aiError, onFind, onSelect, onViewAll, onEditMission }: {
   contacts: Contact[];
   mission: { title: string; audience: string; question: string };
   isDiscovering: boolean;
   discovered: boolean;
+  strategy: ResearchStrategy | null;
+  aiError: string;
   onFind: () => void;
   onSelect: (contact: Contact) => void;
   onViewAll: () => void;
@@ -349,21 +400,30 @@ function Radar({ contacts, mission, isDiscovering, discovered, onFind, onSelect,
           <div className="mission-label"><span className="pill">ACTIVE MISSION</span><button onClick={onEditMission}>Edit</button></div>
           <h2>{mission.title}</h2>
           <p>We are looking for {mission.audience} to test {mission.question}.</p>
+          <small className="ai-note">GPT researches public professional sources. Always verify a profile before contacting anyone.</small>
+          {aiError && <div className="mission-error" role="alert"><span>!</span>{aiError}</div>}
         </div>
         <button className="primary-button" onClick={onFind} disabled={isDiscovering}>
-          {isDiscovering ? <><i className="spinner" /> Finding people</> : <>{discovered ? "Explore contacts" : "Find contacts"}<span>→</span></>}
+          {isDiscovering ? <><i className="spinner" /> Researching the web</> : <>{discovered ? "Explore contacts" : "Research contacts with GPT"}<span>→</span></>}
         </button>
       </section>
 
       <div className="signal-row">
-        <div><strong>24</strong><span>profiles analyzed</span></div>
-        <div><strong>8</strong><span>possible introductions</span></div>
-        <div><strong>3</strong><span>interviews this week</span></div>
-        <p><span className="pulse" /> Your radar is up to date</p>
+        <div><strong>{discovered ? contacts.length : "—"}</strong><span>{discovered ? "grounded profiles" : "profiles pending"}</span></div>
+        <div><strong>{discovered ? strategy?.questions.length ?? 0 : "—"}</strong><span>priority questions</span></div>
+        <div><strong>{discovered ? "1" : "—"}</strong><span>mission researched</span></div>
+        <p><span className="pulse" /> {discovered ? "GPT radar grounded in public sources" : "Ready for AI research"}</p>
       </div>
 
+      {strategy && (
+        <section className="ai-brief">
+          <div><span className="eyebrow">GPT MARKET BRIEF</span><h2>{strategy.summary}</h2><small>Generated with {strategy.model}</small></div>
+          <ol>{strategy.questions.map((question, index) => <li key={question}><span>0{index + 1}</span>{question}</li>)}</ol>
+        </section>
+      )}
+
       <div className="section-heading">
-        <div><span className="eyebrow">YOUR NEXT MOVE</span><h2>3 people you should meet</h2></div>
+        <div><span className="eyebrow">YOUR NEXT MOVE</span><h2>{discovered ? "People worth learning from" : "Example profiles before research"}</h2></div>
         <button className="text-button" onClick={onViewAll}>View all <span>↗</span></button>
       </div>
 
@@ -388,10 +448,10 @@ function ContactsView({ contacts, total, query, filter, contacted, onQuery, onFi
   const filters = ["All", "Potential customer", "Founder", "Expert"];
   return (
     <>
-      <PageHeader eyebrow="PEOPLE MAP" title="Strategic contacts" subtitle={`${total} profiles prioritized for your current hypothesis.`} />
+      <PageHeader eyebrow="PEOPLE MAP" title="Strategic contacts" subtitle={`${total} profiles prioritized for learning value. AI results include a public source for verification.`} />
       <div className="contact-toolbar">
         <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search by name, role, or company" /></label>
-        <button className="primary-button compact" onClick={onFind}>+ Expand radar</button>
+        <button className="primary-button compact" onClick={onFind}>↻ Refresh with GPT</button>
       </div>
       <div className="filter-row" aria-label="Filter contacts">
         {filters.map((item) => <button key={item} className={filter === item ? "selected" : ""} onClick={() => onFilter(item)}>{item}</button>)}
@@ -421,6 +481,8 @@ function MessagesView({ contacts, contacted, onSelect, onCopy }: {
   onSelect: (contact: Contact) => void;
   onCopy: (contact: Contact) => void;
 }) {
+  const recommendedContact = contacts[0];
+  const recommendedMessage = recommendedContact.message ?? `Hi ${recommendedContact.name.split(" ")[0]}, I'm exploring a way to help SMBs reduce late payments. Your experience at ${recommendedContact.company} feels especially relevant. I'm not trying to sell you anything—would you be open to a 20-minute conversation so I can test what I'm learning?`;
   return (
     <>
       <PageHeader eyebrow="HUMAN OUTREACH" title="Messages with context" subtitle="Personalize the reason, ask for little, and learn a lot." />
@@ -439,13 +501,9 @@ function MessagesView({ contacts, contacted, onSelect, onCopy }: {
         <section className="message-preview">
           <span className="eyebrow">RECOMMENDED TEMPLATE</span>
           <h2>A short, specific invitation with no sales pitch.</h2>
-          <div className="message-paper">
-            <p>Hi <mark>[name]</mark>, I&apos;m exploring a way to help SMBs reduce late payments.</p>
-            <p>Your experience at <mark>[company]</mark> feels especially relevant. I&apos;m not trying to sell you anything—would you be open to a 20-minute conversation so I can test what I&apos;m learning?</p>
-            <p>Thanks,<br />Martí</p>
-          </div>
+          <div className="message-paper generated-message"><p>{recommendedMessage}</p></div>
           <div className="message-tip"><span>↗</span><p><strong>Improve your response rate</strong>Add one specific reason why you chose that person.</p></div>
-          <button className="primary-button" onClick={() => onCopy(contacts[0])}>Copy with Laura&apos;s details <span>→</span></button>
+          <button className="primary-button" onClick={() => onCopy(recommendedContact)}>Copy message for {recommendedContact.name.split(" ")[0]} <span>→</span></button>
         </section>
       </div>
     </>
@@ -497,7 +555,7 @@ function ContactCard({ contact, onSelect }: { contact: Contact; onSelect: (conta
     <article className="contact-card">
       <div className="card-topline"><div className={`contact-avatar ${contact.color}`}>{contact.initials}</div><span className="fit"><i /> {contact.fit}% fit</span></div>
       <h3>{contact.name}</h3><p className="role">{contact.role} · {contact.company}</p>
-      <div className="why"><span>WHY NOW</span><p>{contact.reason}</p></div>
+      <div className="why"><span>{contact.aiGenerated ? "WHY THIS PERSON · AI + PUBLIC WEB" : "WHY NOW · EXAMPLE PROFILE"}</span><p>{contact.reason}</p></div>
       <button className="card-button" onClick={() => onSelect(contact)}>Prepare outreach <span>→</span></button>
     </article>
   );
@@ -516,9 +574,10 @@ function ContactDrawer({ contact, isContacted, onClose, onCopy, onContact }: {
       <aside className="drawer">
         <button className="close-button" onClick={onClose} aria-label="Close panel">×</button>
         <div className="drawer-profile"><span className={`contact-avatar large ${contact.color}`}>{contact.initials}</span><div><span className="fit"><i /> {contact.fit}% fit</span><h2>{contact.name}</h2><p>{contact.role} · {contact.company}</p></div></div>
-        <div className="warm-path"><span>≈</span><div><strong>Best way in</strong><p>{contact.warm}</p></div></div>
+        <div className="warm-path"><span>{contact.sourceUrl ? "↗" : "≈"}</span><div><strong>{contact.sourceUrl ? "Public source" : "Best way in"}</strong>{contact.sourceUrl ? <a href={contact.sourceUrl} target="_blank" rel="noreferrer">Verify this professional profile</a> : <p>{contact.warm}</p>}</div></div>
+        {contact.sourceUrl && <section className="drawer-section"><span className="eyebrow">HOW TO REACH THEM RESPONSIBLY</span><p>{contact.warm}</p></section>}
         <section className="drawer-section"><span className="eyebrow">CONVERSATION ANGLE</span><p>{contact.angle}</p></section>
-        <section className="drawer-section"><span className="eyebrow">SUGGESTED MESSAGE</span><div className="draft-message"><p>Hi {contact.name.split(" ")[0]}, I&apos;m exploring a way to help SMBs reduce late payments.</p><p>Your experience at {contact.company} feels especially relevant. I&apos;m not trying to sell you anything—would you be open to a 20-minute conversation so I can test what I&apos;m learning?</p></div><button className="copy-button" onClick={onCopy}>Copy message <span>⧉</span></button></section>
+        <section className="drawer-section"><span className="eyebrow">SUGGESTED MESSAGE</span><div className="draft-message generated-message"><p>{contact.message ?? `Hi ${contact.name.split(" ")[0]}, I'm exploring a way to help SMBs reduce late payments. Your experience at ${contact.company} feels especially relevant. I'm not trying to sell you anything—would you be open to a 20-minute conversation so I can test what I'm learning?`}</p></div><button className="copy-button" onClick={onCopy}>Copy message <span>⧉</span></button></section>
         <button className={`primary-button drawer-cta ${isContacted ? "completed" : ""}`} onClick={onContact} disabled={isContacted}>{isContacted ? "Already in follow-up" : "Mark as contacted"}<span>{isContacted ? "✓" : "→"}</span></button>
       </aside>
     </div>
