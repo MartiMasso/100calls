@@ -206,7 +206,7 @@ export async function POST(request: Request) {
     const apiKey = env("OPENAI_API_KEY");
     if (!apiKey) return Response.json({ error: "AI research has not been configured by the workspace owner yet." }, { status: 503 });
 
-    const model = env("OPENAI_MODEL") || "gpt-5.4-mini";
+    const model = env("OPENAI_MODEL") || "gpt-5.6-luna";
     const openaiResponse = await fetch(OPENAI_RESPONSES_URL, {
       method: "POST",
       headers: {
