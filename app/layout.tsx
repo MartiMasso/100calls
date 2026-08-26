@@ -18,8 +18,8 @@ export async function generateMetadata(): Promise<Metadata> {
   const host = requestHeaders.get("host") ?? "localhost:3000";
   const protocol = requestHeaders.get("x-forwarded-proto") ?? (host.startsWith("localhost") ? "http" : "https");
   const origin = `${protocol}://${host}`;
-  const title = "100 Calls · Habla con quien de verdad importa";
-  const description = "Encuentra contactos estratégicos, prepara conversaciones y convierte 100 llamadas en evidencia para validar tu idea de negocio.";
+  const title = "100 Calls · Talk to the people who truly matter";
+  const description = "Find strategic contacts, prepare meaningful conversations, and turn 100 calls into evidence that validates your business idea.";
 
   return {
     metadataBase: new URL(origin),
@@ -30,7 +30,7 @@ export async function generateMetadata(): Promise<Metadata> {
       title,
       description,
       type: "website",
-      images: [{ url: `${origin}/og.png`, width: 1672, height: 941, alt: "100 Calls · Habla con quien de verdad importa" }],
+      images: [{ url: `${origin}/og.png`, width: 1672, height: 941, alt: "100 Calls · Talk to the people who truly matter" }],
     },
     twitter: { card: "summary_large_image", title, description, images: [`${origin}/og.png`] },
   };
@@ -42,7 +42,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="es">
+    <html lang="en">
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >

@@ -2,7 +2,7 @@
 
 import { FormEvent, useMemo, useState } from "react";
 
-type View = "radar" | "contactos" | "mensajes" | "aprendizajes";
+type View = "radar" | "contacts" | "messages" | "learnings";
 type Contact = {
   id: number;
   initials: string;
@@ -12,7 +12,7 @@ type Contact = {
   reason: string;
   angle: string;
   fit: number;
-  type: "Cliente potencial" | "Founder" | "Experto";
+  type: "Potential customer" | "Founder" | "Expert";
   color: string;
   warm: string;
 };
@@ -24,25 +24,25 @@ const primaryContacts: Contact[] = [
     name: "Laura Martín",
     role: "COO",
     company: "Payflow",
-    reason: "Ha escalado operaciones B2B de 10 a 120 clientes.",
-    angle: "Pregúntale qué señales separan un problema molesto de uno por el que un equipo paga hoy.",
+    reason: "She scaled B2B operations from 10 to 120 customers.",
+    angle: "Ask her which signals separate an annoying problem from one a team will pay to solve today.",
     fit: 96,
-    type: "Experto",
+    type: "Expert",
     color: "coral",
-    warm: "2 contactos en común",
+    warm: "2 mutual contacts",
   },
   {
     id: 2,
     initials: "JR",
     name: "Javier Ríos",
-    role: "Fundador",
+    role: "Founder",
     company: "CobroSimple",
-    reason: "Construyó una solución cercana a tu hipótesis.",
-    angle: "Contrasta por qué el mercado elige automatizar cobros y cuándo sigue prefiriendo Excel.",
+    reason: "He built a solution closely related to your hypothesis.",
+    angle: "Explore why the market chooses to automate collections and when it still prefers Excel.",
     fit: 91,
     type: "Founder",
     color: "mint",
-    warm: "Presentación posible vía Álex",
+    warm: "Warm introduction possible through Álex",
   },
   {
     id: 3,
@@ -50,12 +50,12 @@ const primaryContacts: Contact[] = [
     name: "Sofía Mena",
     role: "CFO",
     company: "Cobee",
-    reason: "Decide sobre herramientas financieras para pymes.",
-    angle: "Explora el coste real del seguimiento manual y quién siente el dolor dentro del equipo.",
+    reason: "She makes purchasing decisions on financial tools for SMBs.",
+    angle: "Explore the true cost of manual follow-up and who feels the pain inside the team.",
     fit: 88,
-    type: "Cliente potencial",
+    type: "Potential customer",
     color: "blue",
-    warm: "Contacto directo",
+    warm: "Direct contact",
   },
 ];
 
@@ -66,25 +66,25 @@ const discoveredContacts: Contact[] = [
     name: "Alba Gómez",
     role: "Head of Finance",
     company: "Factorial",
-    reason: "Conoce la operativa financiera de empresas en crecimiento.",
-    angle: "Valida si los impagos son una prioridad recurrente o un problema estacional.",
+    reason: "She understands the financial operations of growing companies.",
+    angle: "Test whether late payments are a recurring priority or a seasonal problem.",
     fit: 86,
-    type: "Cliente potencial",
+    type: "Potential customer",
     color: "yellow",
-    warm: "1 contacto en común",
+    warm: "1 mutual contact",
   },
   {
     id: 5,
     initials: "DP",
     name: "Diego Pardo",
-    role: "Advisor fintech",
+    role: "Fintech advisor",
     company: "SeedRocket",
-    reason: "Ha acompañado a 20+ startups financieras en fase inicial.",
-    angle: "Pídele patrones de fracaso y una introducción a dos perfiles especialmente críticos.",
+    reason: "He has advised 20+ early-stage fintech startups.",
+    angle: "Ask him about recurring failure patterns and for introductions to two especially critical profiles.",
     fit: 84,
-    type: "Experto",
+    type: "Expert",
     color: "lilac",
-    warm: "Presentación posible vía Marta",
+    warm: "Warm introduction possible through Marta",
   },
   {
     id: 6,
@@ -92,20 +92,20 @@ const discoveredContacts: Contact[] = [
     name: "Clara Navarro",
     role: "CEO",
     company: "Studio Norte",
-    reason: "Gestiona una pyme de servicios con cobros recurrentes.",
-    angle: "Reconstruye su último impago: qué ocurrió, cuánto costó y cómo lo resolvió.",
+    reason: "She runs a service business with recurring payments.",
+    angle: "Reconstruct her latest late payment: what happened, what it cost, and how she resolved it.",
     fit: 81,
-    type: "Cliente potencial",
+    type: "Potential customer",
     color: "pink",
-    warm: "Contacto directo",
+    warm: "Direct contact",
   },
 ];
 
 const tabs: { id: View; label: string; icon: string }[] = [
   { id: "radar", label: "Radar", icon: "◐" },
-  { id: "contactos", label: "Contactos", icon: "☷" },
-  { id: "mensajes", label: "Mensajes", icon: "✎" },
-  { id: "aprendizajes", label: "Aprendizajes", icon: "◇" },
+  { id: "contacts", label: "Contacts", icon: "☷" },
+  { id: "messages", label: "Messages", icon: "✎" },
+  { id: "learnings", label: "Learnings", icon: "◇" },
 ];
 
 export default function Home() {
@@ -114,19 +114,19 @@ export default function Home() {
   const [discovered, setDiscovered] = useState(false);
   const [isDiscovering, setIsDiscovering] = useState(false);
   const [contacted, setContacted] = useState<number[]>([2]);
-  const [filter, setFilter] = useState("Todos");
+  const [filter, setFilter] = useState("All");
   const [query, setQuery] = useState("");
   const [showMission, setShowMission] = useState(false);
   const [toast, setToast] = useState("");
   const [mission, setMission] = useState({
-    title: "Validar una herramienta que reduzca los impagos en pymes",
-    audience: "responsables financieros, founders B2B y expertos en cobros",
-    question: "problema, urgencia y disposición a pagar",
+    title: "Validate a tool that reduces late payments for SMBs",
+    audience: "finance leaders, B2B founders, and collections experts",
+    question: "the problem, urgency, and willingness to pay",
   });
 
   const contacts = discovered ? [...primaryContacts, ...discoveredContacts] : primaryContacts;
   const filteredContacts = useMemo(() => contacts.filter((contact) => {
-    const matchesType = filter === "Todos" || contact.type === filter;
+    const matchesType = filter === "All" || contact.type === filter;
     const haystack = `${contact.name} ${contact.role} ${contact.company}`.toLowerCase();
     return matchesType && haystack.includes(query.toLowerCase());
   }), [contacts, filter, query]);
@@ -138,21 +138,21 @@ export default function Home() {
 
   const findContacts = () => {
     if (discovered) {
-      setView("contactos");
+      setView("contacts");
       return;
     }
     setIsDiscovering(true);
     window.setTimeout(() => {
       setDiscovered(true);
       setIsDiscovering(false);
-      notify("3 nuevos contactos encontrados");
+      notify("3 new contacts found");
     }, 900);
   };
 
   const markContacted = (id: number) => {
     if (!contacted.includes(id)) setContacted((current) => [...current, id]);
     setSelected(null);
-    notify("Contacto movido a seguimiento");
+    notify("Contact moved to follow-up");
   };
 
   const saveMission = (event: FormEvent<HTMLFormElement>) => {
@@ -165,42 +165,42 @@ export default function Home() {
     });
     setShowMission(false);
     setDiscovered(false);
-    notify("Nueva misión preparada");
+    notify("New mission ready");
   };
 
   const copyMessage = async (contact: Contact) => {
-    const message = `Hola ${contact.name.split(" ")[0]}, estoy explorando una forma de ayudar a pymes a reducir impagos. Tu experiencia en ${contact.company} me parece especialmente relevante. No quiero venderte nada: ¿te apetecería compartir 20 minutos para contrastar lo que estoy aprendiendo?`;
+    const message = `Hi ${contact.name.split(" ")[0]}, I'm exploring a way to help SMBs reduce late payments. Your experience at ${contact.company} feels especially relevant. I'm not trying to sell you anything—would you be open to a 20-minute conversation so I can test what I'm learning?`;
     try { await navigator.clipboard.writeText(message); } catch { /* Clipboard can be unavailable in previews. */ }
-    notify("Mensaje copiado");
+    notify("Message copied");
   };
 
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <button className="brand" onClick={() => setView("radar")} aria-label="Ir al radar">
+        <button className="brand" onClick={() => setView("radar")} aria-label="Go to radar">
           <span className="brand-mark">100</span>
           <span>CALLS</span>
         </button>
-        <nav className="side-nav" aria-label="Navegación principal">
+        <nav className="side-nav" aria-label="Main navigation">
           {tabs.map((tab) => (
             <button className={`nav-item ${view === tab.id ? "active" : ""}`} key={tab.id} onClick={() => setView(tab.id)}>
               <span>{tab.icon}</span>{tab.label}
-              {tab.id === "contactos" && <b>{contacts.length}</b>}
-              {tab.id === "mensajes" && <b>{contacted.length}</b>}
+              {tab.id === "contacts" && <b>{contacts.length}</b>}
+              {tab.id === "messages" && <b>{contacted.length}</b>}
             </button>
           ))}
         </nav>
-        <button className="new-mission" onClick={() => setShowMission(true)}><span>+</span> Nueva misión</button>
+        <button className="new-mission" onClick={() => setShowMission(true)}><span>+</span> New mission</button>
         <div className="sidebar-bottom">
-          <div className="goal-label"><p>Tu objetivo</p><strong>{12 + contacted.length} / 100</strong></div>
+          <div className="goal-label"><p>Your goal</p><strong>{12 + contacted.length} / 100</strong></div>
           <div className="progress-track"><span style={{ width: `${12 + contacted.length}%` }} /></div>
-          <small>Conversaciones activadas</small>
+          <small>Conversations activated</small>
         </div>
       </aside>
 
       <div className="mobile-header">
         <button className="brand" onClick={() => setView("radar")}><span className="brand-mark">100</span><span>CALLS</span></button>
-        <select aria-label="Cambiar sección" value={view} onChange={(event) => setView(event.target.value as View)}>
+        <select aria-label="Change section" value={view} onChange={(event) => setView(event.target.value as View)}>
           {tabs.map((tab) => <option key={tab.id} value={tab.id}>{tab.label}</option>)}
         </select>
       </div>
@@ -214,12 +214,12 @@ export default function Home() {
             discovered={discovered}
             onFind={findContacts}
             onSelect={setSelected}
-            onViewAll={() => setView("contactos")}
+            onViewAll={() => setView("contacts")}
             onEditMission={() => setShowMission(true)}
           />
         )}
 
-        {view === "contactos" && (
+        {view === "contacts" && (
           <ContactsView
             contacts={filteredContacts}
             total={contacts.length}
@@ -233,11 +233,11 @@ export default function Home() {
           />
         )}
 
-        {view === "mensajes" && (
+        {view === "messages" && (
           <MessagesView contacts={contacts} contacted={contacted} onSelect={setSelected} onCopy={copyMessage} />
         )}
 
-        {view === "aprendizajes" && <LearningsView />}
+        {view === "learnings" && <LearningsView />}
       </section>
 
       {selected && (
@@ -269,31 +269,31 @@ function Radar({ contacts, mission, isDiscovering, discovered, onFind, onSelect,
   return (
     <>
       <header className="topbar">
-        <div><span className="eyebrow">BUENOS DÍAS, MARTÍ</span><h1>Habla con quien de verdad importa.</h1></div>
-        <button className="avatar" aria-label="Abrir perfil">MM</button>
+        <div><span className="eyebrow">GOOD MORNING, MARTÍ</span><h1>Talk to the people who truly matter.</h1></div>
+        <button className="avatar" aria-label="Open profile">MM</button>
       </header>
 
       <section className="mission-card">
         <div className="mission-copy">
-          <div className="mission-label"><span className="pill">MISIÓN ACTIVA</span><button onClick={onEditMission}>Editar</button></div>
+          <div className="mission-label"><span className="pill">ACTIVE MISSION</span><button onClick={onEditMission}>Edit</button></div>
           <h2>{mission.title}</h2>
-          <p>Buscamos {mission.audience} para contrastar {mission.question}.</p>
+          <p>We are looking for {mission.audience} to test {mission.question}.</p>
         </div>
         <button className="primary-button" onClick={onFind} disabled={isDiscovering}>
-          {isDiscovering ? <><i className="spinner" /> Buscando perfiles</> : <>{discovered ? "Explorar contactos" : "Encontrar contactos"}<span>→</span></>}
+          {isDiscovering ? <><i className="spinner" /> Finding people</> : <>{discovered ? "Explore contacts" : "Find contacts"}<span>→</span></>}
         </button>
       </section>
 
       <div className="signal-row">
-        <div><strong>24</strong><span>perfiles analizados</span></div>
-        <div><strong>8</strong><span>introducciones posibles</span></div>
-        <div><strong>3</strong><span>entrevistas esta semana</span></div>
-        <p><span className="pulse" /> Tu radar está actualizado</p>
+        <div><strong>24</strong><span>profiles analyzed</span></div>
+        <div><strong>8</strong><span>possible introductions</span></div>
+        <div><strong>3</strong><span>interviews this week</span></div>
+        <p><span className="pulse" /> Your radar is up to date</p>
       </div>
 
       <div className="section-heading">
-        <div><span className="eyebrow">TU PRÓXIMO MOVIMIENTO</span><h2>3 personas que deberías conocer</h2></div>
-        <button className="text-button" onClick={onViewAll}>Ver todos <span>↗</span></button>
+        <div><span className="eyebrow">YOUR NEXT MOVE</span><h2>3 people you should meet</h2></div>
+        <button className="text-button" onClick={onViewAll}>View all <span>↗</span></button>
       </div>
 
       <div className="contact-grid">
@@ -314,15 +314,15 @@ function ContactsView({ contacts, total, query, filter, contacted, onQuery, onFi
   onSelect: (contact: Contact) => void;
   onFind: () => void;
 }) {
-  const filters = ["Todos", "Cliente potencial", "Founder", "Experto"];
+  const filters = ["All", "Potential customer", "Founder", "Expert"];
   return (
     <>
-      <PageHeader eyebrow="MAPA DE PERSONAS" title="Contactos estratégicos" subtitle={`${total} perfiles priorizados para tu hipótesis actual.`} />
+      <PageHeader eyebrow="PEOPLE MAP" title="Strategic contacts" subtitle={`${total} profiles prioritized for your current hypothesis.`} />
       <div className="contact-toolbar">
-        <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Buscar por nombre, cargo o empresa" /></label>
-        <button className="primary-button compact" onClick={onFind}>+ Ampliar radar</button>
+        <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search by name, role, or company" /></label>
+        <button className="primary-button compact" onClick={onFind}>+ Expand radar</button>
       </div>
-      <div className="filter-row" aria-label="Filtrar contactos">
+      <div className="filter-row" aria-label="Filter contacts">
         {filters.map((item) => <button key={item} className={filter === item ? "selected" : ""} onClick={() => onFilter(item)}>{item}</button>)}
       </div>
       {contacts.length > 0 ? (
@@ -333,13 +333,13 @@ function ContactsView({ contacts, total, query, filter, contacted, onQuery, onFi
               <span className="contact-person"><strong>{contact.name}</strong><small>{contact.role} · {contact.company}</small></span>
               <span className="type-tag">{contact.type}</span>
               <span className="contact-reason">{contact.reason}</span>
-              <span className={`status ${contacted.includes(contact.id) ? "done" : ""}`}><i />{contacted.includes(contact.id) ? "Contactado" : "Pendiente"}</span>
+              <span className={`status ${contacted.includes(contact.id) ? "done" : ""}`}><i />{contacted.includes(contact.id) ? "Contacted" : "Pending"}</span>
               <span className="fit plain">{contact.fit}%</span>
               <span className="row-arrow">→</span>
             </button>
           ))}
         </div>
-      ) : <div className="empty-state"><strong>No hay coincidencias</strong><p>Prueba con otro nombre, cargo o tipo de contacto.</p></div>}
+      ) : <div className="empty-state"><strong>No matches found</strong><p>Try a different name, role, or contact type.</p></div>}
     </>
   );
 }
@@ -352,10 +352,10 @@ function MessagesView({ contacts, contacted, onSelect, onCopy }: {
 }) {
   return (
     <>
-      <PageHeader eyebrow="OUTREACH HUMANO" title="Mensajes con contexto" subtitle="Personaliza el porqué, pide poco y aprende mucho." />
+      <PageHeader eyebrow="HUMAN OUTREACH" title="Messages with context" subtitle="Personalize the reason, ask for little, and learn a lot." />
       <div className="message-layout">
         <section className="queue-panel">
-          <div className="panel-heading"><span>COLA DE CONTACTO</span><b>{contacts.length}</b></div>
+          <div className="panel-heading"><span>OUTREACH QUEUE</span><b>{contacts.length}</b></div>
           {contacts.map((contact, index) => (
             <button className="queue-row" key={contact.id} onClick={() => onSelect(contact)}>
               <span className="queue-number">{String(index + 1).padStart(2, "0")}</span>
@@ -366,15 +366,15 @@ function MessagesView({ contacts, contacted, onSelect, onCopy }: {
           ))}
         </section>
         <section className="message-preview">
-          <span className="eyebrow">PLANTILLA RECOMENDADA</span>
-          <h2>Una invitación breve, específica y sin vender.</h2>
+          <span className="eyebrow">RECOMMENDED TEMPLATE</span>
+          <h2>A short, specific invitation with no sales pitch.</h2>
           <div className="message-paper">
-            <p>Hola <mark>[nombre]</mark>, estoy explorando una forma de ayudar a pymes a reducir impagos.</p>
-            <p>Tu experiencia en <mark>[empresa]</mark> me parece especialmente relevante. No quiero venderte nada: ¿te apetecería compartir 20 minutos para contrastar lo que estoy aprendiendo?</p>
-            <p>Gracias,<br />Martí</p>
+            <p>Hi <mark>[name]</mark>, I&apos;m exploring a way to help SMBs reduce late payments.</p>
+            <p>Your experience at <mark>[company]</mark> feels especially relevant. I&apos;m not trying to sell you anything—would you be open to a 20-minute conversation so I can test what I&apos;m learning?</p>
+            <p>Thanks,<br />Martí</p>
           </div>
-          <div className="message-tip"><span>↗</span><p><strong>Mejora la respuesta</strong>Añade una razón concreta por la que has elegido a esa persona.</p></div>
-          <button className="primary-button" onClick={() => onCopy(contacts[0])}>Copiar con datos de Laura <span>→</span></button>
+          <div className="message-tip"><span>↗</span><p><strong>Improve your response rate</strong>Add one specific reason why you chose that person.</p></div>
+          <button className="primary-button" onClick={() => onCopy(contacts[0])}>Copy with Laura&apos;s details <span>→</span></button>
         </section>
       </div>
     </>
@@ -384,33 +384,33 @@ function MessagesView({ contacts, contacted, onSelect, onCopy }: {
 function LearningsView() {
   return (
     <>
-      <PageHeader eyebrow="NO ACUMULES NOTAS, ENCUENTRA SEÑALES" title="Lo que estás aprendiendo" subtitle="Síntesis provisional de 12 conversaciones." />
+      <PageHeader eyebrow="DON'T COLLECT NOTES, FIND SIGNALS" title="What you are learning" subtitle="A working synthesis of 12 conversations." />
       <div className="learning-grid">
         <article className="learning-hero">
-          <span className="pill">SEÑAL FUERTE</span>
-          <strong>8 de 12</strong>
-          <h2>El seguimiento manual consume más tiempo que el propio impago.</h2>
-          <p>La urgencia aparece al superar 30 facturas recurrentes. Antes de ese punto, las hojas de cálculo siguen siendo “suficientemente buenas”.</p>
+          <span className="pill">STRONG SIGNAL</span>
+          <strong>8 of 12</strong>
+          <h2>Manual follow-up takes more time than the late payment itself.</h2>
+          <p>Urgency appears once a business manages more than 30 recurring invoices. Before that point, spreadsheets remain “good enough.”</p>
         </article>
         <article className="hypothesis-card">
-          <div className="hypothesis-top"><span>HIPÓTESIS 01</span><b className="validated">VALIDANDO</b></div>
-          <h3>Las pymes pagarían por automatizar recordatorios.</h3>
+          <div className="hypothesis-top"><span>HYPOTHESIS 01</span><b className="validated">TESTING</b></div>
+          <h3>SMBs would pay to automate payment reminders.</h3>
           <div className="evidence"><span style={{ width: "68%" }} /></div>
-          <p>5 evidencias a favor · 2 en contra</p>
+          <p>5 supporting signals · 2 against</p>
         </article>
         <article className="hypothesis-card">
-          <div className="hypothesis-top"><span>HIPÓTESIS 02</span><b>ABIERTA</b></div>
-          <h3>El CFO es quien decide la compra.</h3>
+          <div className="hypothesis-top"><span>HYPOTHESIS 02</span><b>OPEN</b></div>
+          <h3>The CFO is the purchase decision-maker.</h3>
           <div className="evidence"><span style={{ width: "42%" }} /></div>
-          <p>3 evidencias a favor · 4 por aclarar</p>
+          <p>3 supporting signals · 4 to clarify</p>
         </article>
       </div>
       <section className="next-questions">
-        <div><span className="eyebrow">PRÓXIMAS PREGUNTAS</span><h2>Lo que aún necesitas descubrir</h2></div>
+        <div><span className="eyebrow">NEXT QUESTIONS</span><h2>What you still need to discover</h2></div>
         <ol>
-          <li><span>01</span>¿Cuánto cuesta hoy resolver un impago de principio a fin?</li>
-          <li><span>02</span>¿Qué evento hace que una pyme busque una solución?</li>
-          <li><span>03</span>¿Quién usaría la herramienta y quién aprobaría el gasto?</li>
+          <li><span>01</span>What does it cost today to resolve a late payment from start to finish?</li>
+          <li><span>02</span>What event makes an SMB start looking for a solution?</li>
+          <li><span>03</span>Who would use the tool, and who would approve the spend?</li>
         </ol>
       </section>
     </>
@@ -424,10 +424,10 @@ function PageHeader({ eyebrow, title, subtitle }: { eyebrow: string; title: stri
 function ContactCard({ contact, onSelect }: { contact: Contact; onSelect: (contact: Contact) => void }) {
   return (
     <article className="contact-card">
-      <div className="card-topline"><div className={`contact-avatar ${contact.color}`}>{contact.initials}</div><span className="fit"><i /> {contact.fit}% encaje</span></div>
+      <div className="card-topline"><div className={`contact-avatar ${contact.color}`}>{contact.initials}</div><span className="fit"><i /> {contact.fit}% fit</span></div>
       <h3>{contact.name}</h3><p className="role">{contact.role} · {contact.company}</p>
-      <div className="why"><span>POR QUÉ AHORA</span><p>{contact.reason}</p></div>
-      <button className="card-button" onClick={() => onSelect(contact)}>Preparar contacto <span>→</span></button>
+      <div className="why"><span>WHY NOW</span><p>{contact.reason}</p></div>
+      <button className="card-button" onClick={() => onSelect(contact)}>Prepare outreach <span>→</span></button>
     </article>
   );
 }
@@ -440,15 +440,15 @@ function ContactDrawer({ contact, isContacted, onClose, onCopy, onContact }: {
   onContact: () => void;
 }) {
   return (
-    <div className="drawer-layer" role="dialog" aria-modal="true" aria-label={`Preparar contacto con ${contact.name}`}>
-      <button className="drawer-backdrop" onClick={onClose} aria-label="Cerrar" />
+    <div className="drawer-layer" role="dialog" aria-modal="true" aria-label={`Prepare outreach to ${contact.name}`}>
+      <button className="drawer-backdrop" onClick={onClose} aria-label="Close" />
       <aside className="drawer">
-        <button className="close-button" onClick={onClose} aria-label="Cerrar panel">×</button>
-        <div className="drawer-profile"><span className={`contact-avatar large ${contact.color}`}>{contact.initials}</span><div><span className="fit"><i /> {contact.fit}% encaje</span><h2>{contact.name}</h2><p>{contact.role} · {contact.company}</p></div></div>
-        <div className="warm-path"><span>≈</span><div><strong>Mejor vía de entrada</strong><p>{contact.warm}</p></div></div>
-        <section className="drawer-section"><span className="eyebrow">ENFOQUE DE LA CONVERSACIÓN</span><p>{contact.angle}</p></section>
-        <section className="drawer-section"><span className="eyebrow">MENSAJE SUGERIDO</span><div className="draft-message"><p>Hola {contact.name.split(" ")[0]}, estoy explorando una forma de ayudar a pymes a reducir impagos.</p><p>Tu experiencia en {contact.company} me parece especialmente relevante. No quiero venderte nada: ¿te apetecería compartir 20 minutos para contrastar lo que estoy aprendiendo?</p></div><button className="copy-button" onClick={onCopy}>Copiar mensaje <span>⧉</span></button></section>
-        <button className={`primary-button drawer-cta ${isContacted ? "completed" : ""}`} onClick={onContact} disabled={isContacted}>{isContacted ? "Ya está en seguimiento" : "Marcar como contactado"}<span>{isContacted ? "✓" : "→"}</span></button>
+        <button className="close-button" onClick={onClose} aria-label="Close panel">×</button>
+        <div className="drawer-profile"><span className={`contact-avatar large ${contact.color}`}>{contact.initials}</span><div><span className="fit"><i /> {contact.fit}% fit</span><h2>{contact.name}</h2><p>{contact.role} · {contact.company}</p></div></div>
+        <div className="warm-path"><span>≈</span><div><strong>Best way in</strong><p>{contact.warm}</p></div></div>
+        <section className="drawer-section"><span className="eyebrow">CONVERSATION ANGLE</span><p>{contact.angle}</p></section>
+        <section className="drawer-section"><span className="eyebrow">SUGGESTED MESSAGE</span><div className="draft-message"><p>Hi {contact.name.split(" ")[0]}, I&apos;m exploring a way to help SMBs reduce late payments.</p><p>Your experience at {contact.company} feels especially relevant. I&apos;m not trying to sell you anything—would you be open to a 20-minute conversation so I can test what I&apos;m learning?</p></div><button className="copy-button" onClick={onCopy}>Copy message <span>⧉</span></button></section>
+        <button className={`primary-button drawer-cta ${isContacted ? "completed" : ""}`} onClick={onContact} disabled={isContacted}>{isContacted ? "Already in follow-up" : "Mark as contacted"}<span>{isContacted ? "✓" : "→"}</span></button>
       </aside>
     </div>
   );
@@ -461,15 +461,15 @@ function MissionModal({ mission, onClose, onSave }: {
 }) {
   return (
     <div className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="mission-title">
-      <button className="modal-backdrop" onClick={onClose} aria-label="Cerrar" />
+      <button className="modal-backdrop" onClick={onClose} aria-label="Close" />
       <form className="mission-modal" onSubmit={onSave}>
-        <button type="button" className="close-button" onClick={onClose} aria-label="Cerrar modal">×</button>
-        <span className="step-label">NUEVA MISIÓN · PASO 1 DE 1</span>
-        <h2 id="mission-title">Convierte tu idea en una pregunta que el mercado pueda responder.</h2>
-        <label>¿Qué quieres validar?<textarea name="idea" required defaultValue={mission.title} rows={3} /></label>
-        <label>¿Con qué perfiles necesitas hablar?<input name="audience" required defaultValue={mission.audience} /></label>
-        <label>¿Qué necesitas aprender?<input name="question" required defaultValue={mission.question} /></label>
-        <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancelar</button><button className="primary-button">Crear mi radar <span>→</span></button></div>
+        <button type="button" className="close-button" onClick={onClose} aria-label="Close modal">×</button>
+        <span className="step-label">NEW MISSION · STEP 1 OF 1</span>
+        <h2 id="mission-title">Turn your idea into a question the market can answer.</h2>
+        <label>What do you want to validate?<textarea name="idea" required defaultValue={mission.title} rows={3} /></label>
+        <label>Which profiles do you need to speak with?<input name="audience" required defaultValue={mission.audience} /></label>
+        <label>What do you need to learn?<input name="question" required defaultValue={mission.question} /></label>
+        <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button">Build my radar <span>→</span></button></div>
       </form>
     </div>
   );
