@@ -142,6 +142,24 @@ export default function Home() {
     };
   }, []);
 
+  useEffect(() => {
+    if (!showAccount) return;
+
+    const closeOnOutsidePress = (event: PointerEvent) => {
+      if (!accountMenuRef.current?.contains(event.target as Node)) setShowAccount(false);
+    };
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowAccount(false);
+    };
+
+    window.addEventListener("pointerdown", closeOnOutsidePress);
+    window.addEventListener("keydown", closeOnEscape);
+    return () => {
+      window.removeEventListener("pointerdown", closeOnOutsidePress);
+      window.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [showAccount]);
+
   const contacts = useMemo(() => aiContacts.length ? aiContacts : primaryContacts, [aiContacts]);
   const filteredContacts = useMemo(() => contacts.filter((contact) => {
     const matchesType = filter === "All" || contact.type === filter;

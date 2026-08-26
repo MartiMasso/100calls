@@ -9,20 +9,22 @@ and turn conversations into market-validation evidence.
 - Email confirmation when enabled in Supabase
 - Password recovery and password updates
 - Persistent Supabase sessions and sign-out
-- Interactive contact radar, outreach drafts, and learning views
+- GPT-powered public-web research for grounded strategic contacts
+- Source links, fit ranking, conversation angles, and personalized outreach
+- Per-user request limits and server-side API-key protection
 - Deployments through OpenAI Sites or Vercel
 
-The contacts, mission, progress, and learnings currently use demonstration data
-and local React state. Authentication is real; product records are not yet saved
-to Supabase. The next backend step is to create user-owned tables with Row Level
-Security policies based on `auth.uid()`.
+Before the first GPT research run, the radar displays demonstration contacts.
+Generated research and product records currently live in local React state and
+are not yet saved to Supabase. The next backend step is to create user-owned
+tables with Row Level Security policies based on `auth.uid()`.
 
 ## Local setup
 
-Requires Node.js `>=22.13.0`.
+Requires Node.js `22.x`.
 
 1. Copy `.env.example` to `.env.local`.
-2. Add the Supabase project URL and public anon key.
+2. Add the Supabase project URL, public key, and a server-only OpenAI API key.
 3. Install and run:
 
 ```bash
@@ -57,7 +59,12 @@ Production, Preview, and Development:
 ```text
 NEXT_PUBLIC_SUPABASE_URL=https://aavkaczgsjdnkufhdpie.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<your public anon key>
+OPENAI_API_KEY=<your server-only OpenAI API key>
+OPENAI_MODEL=gpt-5.4-mini
 ```
+
+Set `OPENAI_API_KEY` as a **Secret**. Never prefix it with `NEXT_PUBLIC_`.
+`OPENAI_MODEL` is ordinary configuration and can remain `gpt-5.4-mini`.
 
 Vercel will run `npm run build:vercel`. For local Vercel-compatible development,
 use `npm run dev:vercel`.
