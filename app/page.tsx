@@ -1,8 +1,11 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { supabase } from "@/lib/supabase";
 
 type View = "radar" | "contacts" | "messages" | "learnings";
+type AuthMode = "signin" | "signup" | "forgot" | "reset";
 type Contact = {
   id: number;
   initials: string;
@@ -109,6 +112,12 @@ const tabs: { id: View; label: string; icon: string }[] = [
 ];
 
 export default function Home() {
+  const [session, setSession] = useState<Session | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [recoveryMode, setRecoveryMode] = useState(() =>
+    typeof window !== "undefined" && new URLSearchParams(window.location.search).get("mode") === "reset"
+  );
+  const [showAccount, setShowAccount] = useState(false);
   const [view, setView] = useState<View>("radar");
   const [selected, setSelected] = useState<Contact | null>(null);
   const [discovered, setDiscovered] = useState(false);
@@ -124,7 +133,32 @@ export default function Home() {
     question: "the problem, urgency, and willingness to pay",
   });
 
-  const contacts = discovered ? [...primaryContacts, ...discoveredContacts] : primaryContacts;
+  useEffect(() => {
+    let active = true;
+    supabase.auth.getSession().then(({ data }) => {
+      if (!active) return;
+      setSession(data.session);
+      setAuthLoading(false);
+    });
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
+      if (!active) return;
+      setSession(nextSession);
+      setAuthLoading(false);
+      if (event === "PASSWORD_RECOVERY") setRecoveryMode(true);
+      if (event === "SIGNED_OUT") setShowAccount(false);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  const contacts = useMemo(
+    () => discovered ? [...primaryContacts, ...discoveredContacts] : primaryContacts,
+    [discovered]
+  );
   const filteredContacts = useMemo(() => contacts.filter((contact) => {
     const matchesType = filter === "All" || contact.type === filter;
     const haystack = `${contact.name} ${contact.role} ${contact.company}`.toLowerCase();
@@ -174,6 +208,31 @@ export default function Home() {
     notify("Message copied");
   };
 
+  const finishRecovery = () => {
+    setRecoveryMode(false);
+    window.history.replaceState({}, "", window.location.pathname);
+    notify("Password updated successfully");
+  };
+
+  const signOut = async () => {
+    await supabase.auth.signOut();
+    setShowAccount(false);
+  };
+
+  if (authLoading) return <AuthLoading />;
+
+  if (!session || recoveryMode) {
+    return (
+      <AuthScreen
+        initialMode={recoveryMode ? "reset" : "signin"}
+        onRecoveryComplete={finishRecovery}
+      />
+    );
+  }
+
+  const accountEmail = session.user.email ?? "Your account";
+  const accountInitials = accountEmail.slice(0, 2).toUpperCase();
+
   return (
     <main className="app-shell">
       <aside className="sidebar">
@@ -206,6 +265,19 @@ export default function Home() {
       </div>
 
       <section className="workspace">
+        <div className="account-menu-wrap">
+          <button className="account-button" onClick={() => setShowAccount((open) => !open)} aria-expanded={showAccount} aria-label="Open account menu">
+            <span>{accountInitials}</span><small>{accountEmail}</small><b>⌄</b>
+          </button>
+          {showAccount && (
+            <div className="account-menu">
+              <span className="eyebrow">SIGNED IN AS</span>
+              <strong>{accountEmail}</strong>
+              <button onClick={() => { setShowAccount(false); setRecoveryMode(true); }}>Change password</button>
+              <button onClick={signOut}>Sign out</button>
+            </div>
+          )}
+        </div>
         {view === "radar" && (
           <Radar
             contacts={contacts.slice(0, 3)}
@@ -270,7 +342,6 @@ function Radar({ contacts, mission, isDiscovering, discovered, onFind, onSelect,
     <>
       <header className="topbar">
         <div><span className="eyebrow">GOOD MORNING, MARTÍ</span><h1>Talk to the people who truly matter.</h1></div>
-        <button className="avatar" aria-label="Open profile">MM</button>
       </header>
 
       <section className="mission-card">
@@ -472,5 +543,149 @@ function MissionModal({ mission, onClose, onSave }: {
         <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button">Build my radar <span>→</span></button></div>
       </form>
     </div>
+  );
+}
+
+function AuthLoading() {
+  return (
+    <main className="auth-loading" aria-live="polite">
+      <div className="brand auth-brand"><span className="brand-mark">100</span><span>CALLS</span></div>
+      <i className="spinner dark" />
+      <p>Loading your workspace…</p>
+    </main>
+  );
+}
+
+function AuthScreen({ initialMode, onRecoveryComplete }: {
+  initialMode: AuthMode;
+  onRecoveryComplete: () => void;
+}) {
+  const [mode, setMode] = useState<AuthMode>(initialMode);
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [message, setMessage] = useState("");
+
+  const changeMode = (nextMode: AuthMode) => {
+    setMode(nextMode);
+    setError("");
+    setMessage("");
+    setPassword("");
+    setConfirmPassword("");
+  };
+
+  const submitAuth = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    setLoading(true);
+    setError("");
+    setMessage("");
+
+    try {
+      if (mode === "signin") {
+        const { error: signInError } = await supabase.auth.signInWithPassword({ email, password });
+        if (signInError) throw signInError;
+      }
+
+      if (mode === "signup") {
+        if (password !== confirmPassword) throw new Error("Passwords do not match.");
+        const { data, error: signUpError } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { emailRedirectTo: `${window.location.origin}/` },
+        });
+        if (signUpError) throw signUpError;
+        if (!data.session) {
+          setMessage("Check your inbox to confirm your email, then come back to sign in.");
+        }
+      }
+
+      if (mode === "forgot") {
+        const { error: resetError } = await supabase.auth.resetPasswordForEmail(email, {
+          redirectTo: `${window.location.origin}/?mode=reset`,
+        });
+        if (resetError) throw resetError;
+        setMessage("If an account exists for that email, a secure reset link is on its way.");
+      }
+
+      if (mode === "reset") {
+        if (password.length < 8) throw new Error("Use at least 8 characters for your password.");
+        if (password !== confirmPassword) throw new Error("Passwords do not match.");
+        const { error: updateError } = await supabase.auth.updateUser({ password });
+        if (updateError) throw updateError;
+        onRecoveryComplete();
+      }
+    } catch (authError) {
+      setError(authError instanceof Error ? authError.message : "Something went wrong. Please try again.");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const content = {
+    signin: { eyebrow: "WELCOME BACK", title: "Keep the conversations moving.", action: "Sign in" },
+    signup: { eyebrow: "START YOUR FIRST MISSION", title: "Turn uncertainty into 100 useful conversations.", action: "Create account" },
+    forgot: { eyebrow: "PASSWORD RECOVERY", title: "We'll help you get back in.", action: "Send reset link" },
+    reset: { eyebrow: "SECURE YOUR ACCOUNT", title: "Choose a new password.", action: "Update password" },
+  }[mode];
+
+  return (
+    <main className="auth-shell">
+      <section className="auth-story">
+        <div className="brand auth-brand"><span className="brand-mark">100</span><span>CALLS</span></div>
+        <div className="auth-story-copy">
+          <span className="pill">FROM IDEA TO EVIDENCE</span>
+          <h1>Talk to the people who truly matter.</h1>
+          <p>Find the right people, ask sharper questions, and build your company on evidence instead of assumptions.</p>
+        </div>
+        <div className="auth-proof">
+          <div><strong>100</strong><span>meaningful conversations</span></div>
+          <div><strong>1</strong><span>validated direction</span></div>
+        </div>
+        <div className="auth-network" aria-hidden="true"><i /><i /><i /><span>?</span></div>
+      </section>
+
+      <section className="auth-panel">
+        <div className="auth-form-wrap">
+          <span className="eyebrow">{content.eyebrow}</span>
+          <h2>{content.title}</h2>
+          <p className="auth-subtitle">
+            {mode === "signin" && "Enter your details to open your validation workspace."}
+            {mode === "signup" && "Create a private workspace for your contacts, messages, and learnings."}
+            {mode === "forgot" && "Enter your email and we'll send you a secure password reset link."}
+            {mode === "reset" && "Your new password must contain at least 8 characters."}
+          </p>
+
+          <form className="auth-form" onSubmit={submitAuth}>
+            {mode !== "reset" && (
+              <label>Email address<input type="email" required autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@company.com" /></label>
+            )}
+            {(mode === "signin" || mode === "signup" || mode === "reset") && (
+              <label>
+                <span>{mode === "reset" ? "New password" : "Password"}{mode === "signin" && <button type="button" onClick={() => changeMode("forgot")}>Forgot password?</button>}</span>
+                <input type="password" required minLength={8} autoComplete={mode === "signin" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" />
+              </label>
+            )}
+            {(mode === "signup" || mode === "reset") && (
+              <label>Confirm password<input type="password" required minLength={8} autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Repeat your password" /></label>
+            )}
+
+            {error && <div className="auth-alert error" role="alert"><span>!</span>{error}</div>}
+            {message && <div className="auth-alert success" role="status"><span>✓</span>{message}</div>}
+
+            <button className="primary-button auth-submit" disabled={loading}>
+              {loading ? <><i className="spinner" /> Please wait</> : <>{content.action}<span>→</span></>}
+            </button>
+          </form>
+
+          {mode === "signin" && <p className="auth-switch">New to 100 Calls? <button onClick={() => changeMode("signup")}>Create an account</button></p>}
+          {mode === "signup" && <p className="auth-switch">Already have an account? <button onClick={() => changeMode("signin")}>Sign in</button></p>}
+          {mode === "forgot" && <p className="auth-switch"><button onClick={() => changeMode("signin")}>← Back to sign in</button></p>}
+          {mode === "reset" && <p className="auth-switch"><button onClick={onRecoveryComplete}>Cancel</button></p>}
+        </div>
+        <p className="auth-legal">By continuing, you agree to use 100 Calls responsibly and respect the privacy of every person you contact.</p>
+      </section>
+    </main>
   );
 }
