@@ -2,7 +2,7 @@
 
 import type { Session } from "@supabase/supabase-js";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { restorePersistedSession, supabase } from "@/lib/supabase";
 
 type View = "radar" | "contacts" | "messages" | "learnings";
 type AuthMode = "signin" | "signup" | "forgot" | "reset";
@@ -122,19 +122,26 @@ export default function Home() {
 
   useEffect(() => {
     let active = true;
-    supabase.auth.getSession().then(({ data }) => {
-      if (!active) return;
-      setSession(data.session);
-      setAuthLoading(false);
-    });
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!active) return;
+      if (event === "INITIAL_SESSION") return;
       setSession(nextSession);
       setAuthLoading(false);
       if (event === "PASSWORD_RECOVERY") setRecoveryMode(true);
       if (event === "SIGNED_OUT") setShowAccount(false);
     });
+
+    restorePersistedSession()
+      .then((persistedSession) => {
+        if (active) setSession(persistedSession);
+      })
+      .catch(() => {
+        if (active) setSession(null);
+      })
+      .finally(() => {
+        if (active) setAuthLoading(false);
+      });
 
     return () => {
       active = false;
