@@ -8,7 +8,7 @@ const supabaseUrl =
   "https://aavkaczgsjdnkufhdpie.supabase.co";
 const supabaseAnonKey =
   process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJhYXZrYWN6Z3NqZG5rdWZoZHBpZSIsInJvbGUiOiJhbm9uIiwiaWF0IjoxNzg3NzM4NDgyLCJleHAiOjIxMDMzMTQ0ODJ9.GnUYASfxYUZiVuHZUPXRSmws5fuEsQoIJhGROGC6v-o";
+  "sb_publishable_AakwsZs8XsRS8MwZfL7pww_Ngwyrb6-";
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
   auth: {
