@@ -9,6 +9,7 @@ and turn conversations into market-validation evidence.
 - Email confirmation when enabled in Supabase
 - Password recovery and password updates
 - Persistent Supabase sessions and sign-out
+- Google sign-in through Supabase OAuth (after enabling the provider)
 - GPT-powered public-web research for grounded strategic contacts
 - Source links, fit ranking, conversation angles, and personalized outreach
 - Per-user request limits and server-side API-key protection
@@ -50,6 +51,14 @@ Enable **Confirm Email** if every new account should verify its email before
 signing in. Configure custom SMTP before production email volume; Supabase's
 default email service is intended for testing and has a low sending limit.
 
+For Google sign-in, create a Web OAuth client in Google Cloud, use
+`https://aavkaczgsjdnkufhdpie.supabase.co/auth/v1/callback` as its authorized
+redirect URI, and add `https://100calls-nu.vercel.app` as an authorized
+JavaScript origin. Then enable Google under **Authentication → Sign In /
+Providers** and add the Google Client ID and Client Secret. Finally, allow
+`https://100calls-nu.vercel.app/auth/callback` under **Authentication → URL
+Configuration**.
+
 ## Deploy to Vercel
 
 The repository includes `vercel.json` and a standard Next.js build command.
@@ -60,11 +69,11 @@ Production, Preview, and Development:
 NEXT_PUBLIC_SUPABASE_URL=https://aavkaczgsjdnkufhdpie.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<your public anon key>
 OPENAI_API_KEY=<your server-only OpenAI API key>
-OPENAI_MODEL=gpt-5.4-mini
+OPENAI_MODEL=gpt-5.6-luna
 ```
 
 Set `OPENAI_API_KEY` as a **Secret**. Never prefix it with `NEXT_PUBLIC_`.
-`OPENAI_MODEL` is ordinary configuration and can remain `gpt-5.4-mini`.
+`OPENAI_MODEL` is ordinary configuration and can remain `gpt-5.6-luna`.
 
 Vercel will run `npm run build:vercel`. For local Vercel-compatible development,
 use `npm run dev:vercel`.
