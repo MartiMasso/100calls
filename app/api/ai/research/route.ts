@@ -24,7 +24,7 @@ const responseSchema = {
   type: "object",
   additionalProperties: false,
   properties: {
-    summary: { type: "string", minLength: 1, maxLength: 700 },
+    summary: { type: "string", description: "A concise summary, no longer than 700 characters." },
     profiles: {
       type: "array",
       minItems: 0,
@@ -33,17 +33,17 @@ const responseSchema = {
         type: "object",
         additionalProperties: false,
         properties: {
-          name: { type: "string", minLength: 1, maxLength: 100 },
-          initials: { type: "string", minLength: 1, maxLength: 3 },
-          role: { type: "string", minLength: 1, maxLength: 120 },
-          company: { type: "string", minLength: 1, maxLength: 120 },
-          reason: { type: "string", minLength: 1, maxLength: 320 },
-          angle: { type: "string", minLength: 1, maxLength: 320 },
+          name: { type: "string", description: "The professional's full name, no longer than 100 characters." },
+          initials: { type: "string", description: "One to three uppercase initials." },
+          role: { type: "string", description: "Current professional role, no longer than 120 characters." },
+          company: { type: "string", description: "Current company or organization, no longer than 120 characters." },
+          reason: { type: "string", description: "Why this person is relevant, no longer than 320 characters." },
+          angle: { type: "string", description: "The best research angle, no longer than 320 characters." },
           fit: { type: "integer", minimum: 50, maximum: 99 },
           type: { type: "string", enum: ["Potential customer", "Founder", "Expert"] },
-          searchPath: { type: "string", minLength: 1, maxLength: 220 },
-          message: { type: "string", minLength: 1, maxLength: 900 },
-          sourceUrl: { type: "string", minLength: 8, maxLength: 500 },
+          searchPath: { type: "string", description: "A public route for finding or reaching the person, no longer than 220 characters." },
+          message: { type: "string", description: "A short research invitation, no longer than 900 characters." },
+          sourceUrl: { type: "string", description: "A direct HTTPS public source URL, no longer than 500 characters." },
         },
         required: ["name", "initials", "role", "company", "reason", "angle", "fit", "type", "searchPath", "message", "sourceUrl"],
       },
@@ -52,7 +52,7 @@ const responseSchema = {
       type: "array",
       minItems: 3,
       maxItems: 3,
-      items: { type: "string", minLength: 1, maxLength: 220 },
+      items: { type: "string", description: "A concise interview question, no longer than 220 characters." },
     },
   },
   required: ["summary", "profiles", "questions"],
@@ -149,6 +149,35 @@ function isGrounded(url: string, sources: Set<string>): boolean {
   return [...sources].some((source) => comparableUrl(source) === comparable);
 }
 
+function openAIErrorResponse(status: number, payload: Record<string, unknown>, requestId: string) {
+  const error = payload.error && typeof payload.error === "object"
+    ? payload.error as { message?: unknown; type?: unknown; code?: unknown }
+    : {};
+  const message = cleanText(error.message, 240);
+  const type = cleanText(error.type, 80);
+  const code = cleanText(error.code, 80);
+  const fingerprint = `${type} ${code} ${message}`.toLowerCase();
+
+  console.error("OpenAI research request failed", { status, requestId, type, code, message });
+
+  if (status === 401 || fingerprint.includes("invalid_api_key")) {
+    return Response.json({ error: "OpenAI rejected the configured API key. Replace OPENAI_API_KEY in Vercel and redeploy." }, { status: 502 });
+  }
+  if (fingerprint.includes("insufficient_quota") || fingerprint.includes("billing") || fingerprint.includes("credit")) {
+    return Response.json({ error: "The OpenAI API project has no available credits. Add billing or raise its usage budget, then try again." }, { status: 503 });
+  }
+  if (status === 429) {
+    return Response.json({ error: "OpenAI's rate limit was reached. Please wait a moment and try again." }, { status: 503 });
+  }
+  if (status === 403 || status === 404 || fingerprint.includes("model_not_found")) {
+    return Response.json({ error: "This OpenAI project cannot access GPT-5.6 Luna or web search. Check the project's model permissions and billing tier." }, { status: 503 });
+  }
+  if (status === 400) {
+    return Response.json({ error: "OpenAI rejected the AI research request configuration. Check the Vercel function log for the request ID." }, { status: 502 });
+  }
+  return Response.json({ error: "AI research is temporarily unavailable. Please try again shortly." }, { status: 502 });
+}
+
 function normalizeProfiles(value: unknown, sources: Set<string>) {
   if (!Array.isArray(value)) return [];
   const allowedTypes = new Set(["Potential customer", "Founder", "Expert"]);
@@ -218,7 +247,7 @@ export async function POST(request: Request) {
         store: false,
         max_output_tokens: 3500,
         reasoning: { effort: "low" },
-        tools: [{ type: "web_search_preview", search_context_size: "medium" }],
+        tools: [{ type: "web_search", search_context_size: "medium" }],
         include: ["web_search_call.action.sources"],
         instructions: [
           "You are the market-research engine for 100 Calls.",
@@ -244,11 +273,7 @@ export async function POST(request: Request) {
 
     const payload = await openaiResponse.json() as Record<string, unknown>;
     if (!openaiResponse.ok) {
-      const error = payload.error && typeof payload.error === "object"
-        ? cleanText((payload.error as { message?: unknown }).message, 240)
-        : "";
-      console.error("OpenAI research request failed", openaiResponse.status, error);
-      return Response.json({ error: "AI research is temporarily unavailable. Please try again shortly." }, { status: 502 });
+      return openAIErrorResponse(openaiResponse.status, payload, openaiResponse.headers.get("x-request-id") ?? "unknown");
     }
 
     const outputText = extractOutputText(payload);
