@@ -19,6 +19,7 @@ type Contact = {
   name: string;
   role: string;
   company: string;
+  sector: string;
   reason: string;
   angle: string;
   fit: number;
@@ -27,21 +28,48 @@ type Contact = {
   warm: string;
   message?: string;
   sourceUrl?: string;
+  linkedinUrl?: string;
+  contactMethod?: string;
+  contactUrl?: string;
   aiGenerated?: boolean;
 };
 
-type ResearchStrategy = {
-  summary: string;
+type PlanSegment = {
+  sector: string;
+  priority: "Primary" | "Secondary" | "Exploratory";
+  roles: string[];
+  why: string;
+  learningGoal: string;
+  targetCount: number;
+  searchApproach: string;
+};
+
+type ActionPlan = {
+  objective: string;
+  hypothesis: string;
+  recommendedInterviews: number;
+  segments: PlanSegment[];
+  sequence: Array<{ title: string; detail: string; outcome: string }>;
   questions: string[];
+  successCriteria: string[];
   model: string;
 };
 
-type ResearchResponse = ResearchStrategy & {
+type PlanResponse = {
+  stage: "plan";
+  plan: Omit<ActionPlan, "model">;
+  model: string;
+};
+
+type ContactResearchResponse = {
+  stage: "contacts";
+  model: string;
   profiles: Array<{
     name: string;
     initials: string;
     role: string;
     company: string;
+    sector: string;
     reason: string;
     angle: string;
     fit: number;
@@ -49,14 +77,18 @@ type ResearchResponse = ResearchStrategy & {
     searchPath: string;
     message: string;
     sourceUrl: string;
+    linkedinUrl: string;
+    contactMethod: string;
+    contactUrl: string;
   }>;
 };
 
 type MissionResearch = {
   contacts: Contact[];
-  strategy: ResearchStrategy | null;
+  plan: ActionPlan | null;
   error: string;
   discovered: boolean;
+  isPlanning: boolean;
   isDiscovering: boolean;
   contacted: number[];
 };
@@ -77,9 +109,10 @@ const starterMission: Mission = {
 
 const emptyResearch = (): MissionResearch => ({
   contacts: [],
-  strategy: null,
+  plan: null,
   error: "",
   discovered: false,
+  isPlanning: false,
   isDiscovering: false,
   contacted: [],
 });
@@ -121,48 +154,6 @@ function readStoredMissionWorkspace(metadata: Record<string, unknown> | undefine
   return { version: 1, activeMissionId, missions: uniqueMissions };
 }
 
-const primaryContacts: Contact[] = [
-  {
-    id: 1,
-    initials: "LM",
-    name: "Laura Martín",
-    role: "COO",
-    company: "Payflow",
-    reason: "She scaled B2B operations from 10 to 120 customers.",
-    angle: "Ask her which signals separate an annoying problem from one a team will pay to solve today.",
-    fit: 96,
-    type: "Expert",
-    color: "coral",
-    warm: "2 mutual contacts",
-  },
-  {
-    id: 2,
-    initials: "JR",
-    name: "Javier Ríos",
-    role: "Founder",
-    company: "CobroSimple",
-    reason: "He built a solution closely related to your hypothesis.",
-    angle: "Explore why the market chooses to automate collections and when it still prefers Excel.",
-    fit: 91,
-    type: "Founder",
-    color: "mint",
-    warm: "Warm introduction possible through Álex",
-  },
-  {
-    id: 3,
-    initials: "SM",
-    name: "Sofía Mena",
-    role: "CFO",
-    company: "Cobee",
-    reason: "She makes purchasing decisions on financial tools for SMBs.",
-    angle: "Explore the true cost of manual follow-up and who feels the pain inside the team.",
-    fit: 88,
-    type: "Potential customer",
-    color: "blue",
-    warm: "Direct contact",
-  },
-];
-
 const tabs: { id: View; label: string; icon: string }[] = [
   { id: "radar", label: "Radar", icon: "◐" },
   { id: "contacts", label: "Contacts", icon: "☷" },
@@ -184,7 +175,7 @@ export default function Home() {
   const [missions, setMissions] = useState<Mission[]>([starterMission]);
   const [activeMissionId, setActiveMissionId] = useState(starterMission.id);
   const [missionResearch, setMissionResearch] = useState<Record<string, MissionResearch>>({
-    [starterMission.id]: { ...emptyResearch(), contacted: [2] },
+    [starterMission.id]: emptyResearch(),
   });
   const [missionListOpen, setMissionListOpen] = useState(true);
   const [filter, setFilter] = useState("All");
@@ -210,7 +201,7 @@ export default function Home() {
         const nextResearch: Record<string, MissionResearch> = {};
         nextMissions.forEach((mission) => {
           nextResearch[mission.id] = current[mission.id]
-            ?? (mission.id === starterMission.id ? { ...emptyResearch(), contacted: [2] } : emptyResearch());
+            ?? emptyResearch();
         });
         return nextResearch;
       });
@@ -272,11 +263,8 @@ export default function Home() {
     [activeMissionId, missions],
   );
   const activeResearch = missionResearch[mission.id] ?? emptyResearch();
-  const contacts = useMemo(
-    () => activeResearch.contacts.length ? activeResearch.contacts : primaryContacts,
-    [activeResearch.contacts],
-  );
-  const { strategy, error: aiError, discovered, isDiscovering, contacted } = activeResearch;
+  const contacts = activeResearch.contacts;
+  const { plan, error: aiError, discovered, isPlanning, isDiscovering, contacted } = activeResearch;
   const filteredContacts = useMemo(() => contacts.filter((contact) => {
     const matchesType = filter === "All" || contact.type === filter;
     const haystack = `${contact.name} ${contact.role} ${contact.company}`.toLowerCase();
@@ -332,9 +320,53 @@ export default function Home() {
     notify("Mission switched");
   };
 
+  const buildPlan = async (targetMission: Mission) => {
+    const targetMissionId = targetMission.id;
+    updateMissionResearch(targetMissionId, (current) => ({
+      ...current,
+      isPlanning: true,
+      error: "",
+    }));
+
+    try {
+      const response = await fetch("/api/ai/research", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session?.access_token ?? ""}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ mission: targetMission, stage: "plan" }),
+      });
+      const result = await response.json() as PlanResponse | { error?: string };
+      if (!response.ok || !("plan" in result)) {
+        throw new Error("error" in result && result.error ? result.error : "The strategic plan could not be completed.");
+      }
+
+      updateMissionResearch(targetMissionId, (current) => ({
+        ...current,
+        plan: { ...result.plan, model: result.model },
+        error: "",
+        isPlanning: false,
+      }));
+      notify("Strategic action plan ready");
+    } catch (planningError) {
+      const message = planningError instanceof Error ? planningError.message : "The strategic plan could not be completed.";
+      updateMissionResearch(targetMissionId, (current) => ({
+        ...current,
+        error: message,
+        isPlanning: false,
+      }));
+      notify("The action plan needs your attention");
+    }
+  };
+
   const findContacts = async (refresh = false) => {
     if (discovered && !refresh) {
       setView("contacts");
+      return;
+    }
+    if (!plan) {
+      await buildPlan(mission);
       return;
     }
 
@@ -352,9 +384,9 @@ export default function Home() {
           authorization: `Bearer ${session?.access_token ?? ""}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ mission: researchMission }),
+        body: JSON.stringify({ mission: researchMission, stage: "contacts", plan }),
       });
-      const result = await response.json() as ResearchResponse | { error?: string };
+      const result = await response.json() as ContactResearchResponse | { error?: string };
       if (!response.ok || !("profiles" in result)) {
         throw new Error("error" in result && result.error ? result.error : "AI research could not be completed.");
       }
@@ -366,6 +398,7 @@ export default function Home() {
         name: profile.name,
         role: profile.role,
         company: profile.company,
+        sector: profile.sector,
         reason: profile.reason,
         angle: profile.angle,
         fit: profile.fit,
@@ -374,12 +407,15 @@ export default function Home() {
         warm: profile.searchPath,
         message: profile.message,
         sourceUrl: profile.sourceUrl,
+        linkedinUrl: profile.linkedinUrl,
+        contactMethod: profile.contactMethod,
+        contactUrl: profile.contactUrl,
         aiGenerated: true,
       }));
 
-      updateMissionResearch(researchMissionId, () => ({
+      updateMissionResearch(researchMissionId, (current) => ({
+        ...current,
         contacts: researchedContacts,
-        strategy: { summary: result.summary, questions: result.questions, model: result.model },
         error: "",
         discovered: true,
         isDiscovering: false,
@@ -425,7 +461,8 @@ export default function Home() {
       setMissions(nextMissions);
       updateMissionResearch(mission.id, () => emptyResearch());
       persistMissionWorkspace(nextMissions, mission.id);
-      notify("Mission updated");
+      notify("Mission updated · building a new plan");
+      void buildPlan(updatedMission);
     } else {
       const newMission: Mission = {
         id: crypto.randomUUID(),
@@ -436,7 +473,8 @@ export default function Home() {
       setActiveMissionId(newMission.id);
       setMissionResearch((current) => ({ ...current, [newMission.id]: emptyResearch() }));
       persistMissionWorkspace(nextMissions, newMission.id);
-      notify("New mission saved");
+      notify("Mission created · building the action plan");
+      void buildPlan(newMission);
     }
 
     setMissionModalMode(null);
@@ -502,15 +540,6 @@ export default function Home() {
           <span className="brand-mark">100</span>
           <span>CALLS</span>
         </button>
-        <nav className="side-nav" aria-label="Main navigation">
-          {tabs.map((tab) => (
-            <button className={`nav-item ${view === tab.id ? "active" : ""}`} key={tab.id} onClick={() => setView(tab.id)}>
-              <span>{tab.icon}</span>{tab.label}
-              {tab.id === "contacts" && <b>{contacts.length}</b>}
-              {tab.id === "messages" && <b>{contacted.length}</b>}
-            </button>
-          ))}
-        </nav>
         <button className="new-mission" onClick={() => setMissionModalMode("new")}><span>+</span> New mission</button>
         <section className="mission-library" aria-label="Saved missions">
           <button
@@ -537,6 +566,15 @@ export default function Home() {
             </div>
           )}
         </section>
+        <nav className="side-nav" aria-label="Main navigation">
+          {tabs.map((tab) => (
+            <button className={`nav-item ${view === tab.id ? "active" : ""}`} key={tab.id} onClick={() => setView(tab.id)}>
+              <span>{tab.icon}</span>{tab.label}
+              {tab.id === "contacts" && <b>{contacts.length}</b>}
+              {tab.id === "messages" && <b>{contacted.length}</b>}
+            </button>
+          ))}
+        </nav>
         <div className="sidebar-bottom">
           <div className="goal-label"><p>Your goal</p><strong>{12 + contacted.length} / 100</strong></div>
           <div className="progress-track"><span style={{ width: `${12 + contacted.length}%` }} /></div>
@@ -574,10 +612,12 @@ export default function Home() {
           <Radar
             contacts={contacts.slice(0, 3)}
             mission={mission}
+            isPlanning={isPlanning}
             isDiscovering={isDiscovering}
             discovered={discovered}
-            strategy={strategy}
+            plan={plan}
             aiError={aiError}
+            onBuildPlan={() => buildPlan(mission)}
             onFind={() => findContacts(false)}
             onSelect={setSelected}
             onViewAll={() => setView("contacts")}
@@ -592,6 +632,8 @@ export default function Home() {
             query={query}
             filter={filter}
             contacted={contacted}
+            hasPlan={Boolean(plan)}
+            isDiscovering={isDiscovering}
             onQuery={setQuery}
             onFilter={setFilter}
             onSelect={setSelected}
@@ -629,99 +671,201 @@ export default function Home() {
   );
 }
 
-function Radar({ contacts, mission, isDiscovering, discovered, strategy, aiError, onFind, onSelect, onViewAll, onEditMission }: {
+function groupContactsBySector(contacts: Contact[]): Array<[string, Contact[]]> {
+  const grouped = new Map<string, Contact[]>();
+  contacts.forEach((contact) => grouped.set(contact.sector, [...(grouped.get(contact.sector) ?? []), contact]));
+  return [...grouped.entries()];
+}
+
+function Radar({ contacts, mission, isPlanning, isDiscovering, discovered, plan, aiError, onBuildPlan, onFind, onSelect, onViewAll, onEditMission }: {
   contacts: Contact[];
-  mission: { title: string; audience: string; question: string };
+  mission: Mission;
+  isPlanning: boolean;
   isDiscovering: boolean;
   discovered: boolean;
-  strategy: ResearchStrategy | null;
+  plan: ActionPlan | null;
   aiError: string;
+  onBuildPlan: () => void;
   onFind: () => void;
   onSelect: (contact: Contact) => void;
   onViewAll: () => void;
   onEditMission: () => void;
 }) {
+  const groupedContacts = groupContactsBySector(contacts);
+  const primaryAction = plan ? onFind : onBuildPlan;
+  const actionLabel = isPlanning
+    ? "Building your strategy"
+    : isDiscovering
+      ? "Researching verified profiles"
+      : !plan
+        ? "Build strategic action plan"
+        : discovered
+          ? "Explore contact map"
+          : "Find people for this plan";
+
   return (
     <>
       <header className="topbar">
-        <div><span className="eyebrow">GOOD MORNING, MARTÍ</span><h1>Talk to the people who truly matter.</h1></div>
+        <div><span className="eyebrow">MISSION WORKSPACE</span><h1>Turn a market question into a contact strategy.</h1></div>
       </header>
 
       <section className="mission-card">
         <div className="mission-copy">
-          <div className="mission-label"><span className="pill">ACTIVE MISSION</span><button onClick={onEditMission}>Edit</button></div>
+          <div className="mission-label">
+            <span className="pill">ACTIVE MISSION</span>
+            <button className="edit-mission-button" onClick={onEditMission}><span>✎</span> Edit mission focus</button>
+          </div>
           <h2>{mission.title}</h2>
           <p>We are looking for {mission.audience} to test {mission.question}.</p>
-          <small className="ai-note">GPT researches public professional sources. Always verify a profile before contacting anyone.</small>
+          <small className="ai-note">First build the strategy. Then GPT researches public professional sources and only returns verifiable routes.</small>
           {aiError && <div className="mission-error" role="alert"><span>!</span>{aiError}</div>}
         </div>
-        <button className="primary-button" onClick={onFind} disabled={isDiscovering}>
-          {isDiscovering ? <><i className="spinner" /> Researching the web</> : <>{discovered ? "Explore contacts" : "Research contacts with GPT"}<span>→</span></>}
+        <button className="primary-button mission-primary" onClick={primaryAction} disabled={isPlanning || isDiscovering}>
+          {(isPlanning || isDiscovering) && <i className="spinner" />}{actionLabel}{!isPlanning && !isDiscovering && <span>→</span>}
         </button>
       </section>
 
       <div className="signal-row">
-        <div><strong>{discovered ? contacts.length : "—"}</strong><span>{discovered ? "grounded profiles" : "profiles pending"}</span></div>
-        <div><strong>{discovered ? strategy?.questions.length ?? 0 : "—"}</strong><span>priority questions</span></div>
-        <div><strong>{discovered ? "1" : "—"}</strong><span>mission researched</span></div>
-        <p><span className="pulse" /> {discovered ? "GPT radar grounded in public sources" : "Ready for AI research"}</p>
+        <div><strong>{plan?.segments.length ?? 0}</strong><span>priority sectors</span></div>
+        <div><strong>{plan?.recommendedInterviews ?? 0}</strong><span>target interviews</span></div>
+        <div><strong>{contacts.length}</strong><span>verified profiles</span></div>
+        <p><span className="pulse" /> {discovered ? "Contact map ready" : plan ? "Strategy ready for research" : "Building from the mission focus"}</p>
       </div>
 
-      {strategy && (
-        <section className="ai-brief">
-          <div><span className="eyebrow">GPT MARKET BRIEF</span><h2>{strategy.summary}</h2><small>Generated with {strategy.model}</small></div>
-          <ol>{strategy.questions.map((question, index) => <li key={question}><span>0{index + 1}</span>{question}</li>)}</ol>
+      {isPlanning && (
+        <section className="plan-loading" aria-live="polite">
+          <i className="spinner dark" />
+          <div><span className="eyebrow">GPT STRATEGIST</span><h2>Designing who to contact, why, and in what order.</h2><p>Defining sectors, target roles, interview sequence, questions, and decision criteria.</p></div>
         </section>
       )}
 
-      <div className="section-heading">
-        <div><span className="eyebrow">YOUR NEXT MOVE</span><h2>{discovered ? "People worth learning from" : "Example profiles before research"}</h2></div>
-        <button className="text-button" onClick={onViewAll}>View all <span>↗</span></button>
-      </div>
+      {plan && (
+        <ActionPlanSection plan={plan} isDiscovering={isDiscovering} discovered={discovered} onFind={onFind} />
+      )}
 
-      <div className="contact-grid">
-        {contacts.map((contact) => <ContactCard key={contact.id} contact={contact} onSelect={onSelect} />)}
-      </div>
+      {!plan && !isPlanning && (
+        <section className="plan-empty">
+          <span className="plan-empty-number">01</span>
+          <div><span className="eyebrow">START WITH STRATEGY</span><h2>Your contact list is intentionally empty.</h2><p>Generate the action plan first. It will define the sectors, roles, sequence, questions, and evidence needed before finding individual people.</p></div>
+          <button className="primary-button" onClick={onBuildPlan}>Build action plan <span>→</span></button>
+        </section>
+      )}
+
+      {groupedContacts.length > 0 && (
+        <section className="radar-contact-map">
+          <div className="section-heading">
+            <div><span className="eyebrow">VERIFIED CONTACT MAP</span><h2>Profiles grouped by sector</h2></div>
+            <button className="text-button" onClick={onViewAll}>View full map <span>↗</span></button>
+          </div>
+          {groupedContacts.map(([sector, sectorContacts]) => (
+            <div className="sector-preview" key={sector}>
+              <div className="sector-preview-heading"><h3>{sector}</h3><span>{sectorContacts.length} profiles</span></div>
+              <div className="contact-grid">
+                {sectorContacts.map((contact) => <ContactCard key={contact.id} contact={contact} onSelect={onSelect} />)}
+              </div>
+            </div>
+          ))}
+        </section>
+      )}
     </>
   );
 }
 
-function ContactsView({ contacts, total, query, filter, contacted, onQuery, onFilter, onSelect, onFind }: {
+function ActionPlanSection({ plan, isDiscovering, discovered, onFind }: {
+  plan: ActionPlan;
+  isDiscovering: boolean;
+  discovered: boolean;
+  onFind: () => void;
+}) {
+  return (
+    <section className="action-plan">
+      <header className="action-plan-header">
+        <div><span className="eyebrow">STRATEGIC ACTION PLAN</span><h2>{plan.objective}</h2></div>
+        <div className="plan-target"><strong>{plan.recommendedInterviews}</strong><span>recommended interviews</span></div>
+      </header>
+
+      <div className="plan-hypothesis"><span>RISKIEST ASSUMPTION</span><p>{plan.hypothesis}</p></div>
+
+      <div className="plan-section-title"><span>01</span><div><strong>Who to contact</strong><small>Prioritized sectors and exact roles</small></div></div>
+      <div className="segment-grid">
+        {plan.segments.map((segment) => (
+          <article className="segment-card" key={segment.sector}>
+            <div className="segment-top"><span className={`priority priority-${segment.priority.toLowerCase()}`}>{segment.priority}</span><strong>{segment.targetCount} calls</strong></div>
+            <h3>{segment.sector}</h3>
+            <div className="role-chips">{segment.roles.map((role) => <span key={role}>{role}</span>)}</div>
+            <dl><div><dt>Why them</dt><dd>{segment.why}</dd></div><div><dt>Learn</dt><dd>{segment.learningGoal}</dd></div><div><dt>Find them</dt><dd>{segment.searchApproach}</dd></div></dl>
+          </article>
+        ))}
+      </div>
+
+      <div className="plan-detail-grid">
+        <section>
+          <div className="plan-section-title"><span>02</span><div><strong>Execution sequence</strong><small>Work from assumptions to evidence</small></div></div>
+          <ol className="plan-sequence">{plan.sequence.map((step, index) => <li key={`${step.title}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{step.title}</strong><p>{step.detail}</p><small>OUTPUT · {step.outcome}</small></div></li>)}</ol>
+        </section>
+        <section>
+          <div className="plan-section-title"><span>03</span><div><strong>Interview guide</strong><small>Questions that avoid leading the witness</small></div></div>
+          <ol className="plan-questions">{plan.questions.map((question, index) => <li key={`${question}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span>{question}</li>)}</ol>
+        </section>
+      </div>
+
+      <footer className="plan-footer">
+        <div><span className="eyebrow">DECISION CRITERIA</span><ul>{plan.successCriteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ul><small>Plan generated with {plan.model}</small></div>
+        <button className="primary-button" onClick={onFind} disabled={isDiscovering}>{isDiscovering ? <><i className="spinner" /> Researching the web</> : <>{discovered ? "Refresh verified contacts" : "Find verified people"}<span>→</span></>}</button>
+      </footer>
+    </section>
+  );
+}
+
+function ContactsView({ contacts, total, query, filter, contacted, hasPlan, isDiscovering, onQuery, onFilter, onSelect, onFind }: {
   contacts: Contact[];
   total: number;
   query: string;
   filter: string;
   contacted: number[];
+  hasPlan: boolean;
+  isDiscovering: boolean;
   onQuery: (value: string) => void;
   onFilter: (value: string) => void;
   onSelect: (contact: Contact) => void;
   onFind: () => void;
 }) {
   const filters = ["All", "Potential customer", "Founder", "Expert"];
+  const groupedContacts = groupContactsBySector(contacts);
   return (
     <>
-      <PageHeader eyebrow="PEOPLE MAP" title="Strategic contacts" subtitle={`${total} profiles prioritized for learning value. AI results include a public source for verification.`} />
+      <PageHeader eyebrow="PEOPLE MAP" title="Strategic contacts by sector" subtitle={total ? `${total} profiles prioritized for learning value, with verified public sources and contact routes when available.` : "No example profiles. Build the strategy first, then research real people for this mission."} />
       <div className="contact-toolbar">
         <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search by name, role, or company" /></label>
-        <button className="primary-button compact" onClick={onFind}>↻ Refresh with GPT</button>
+        <button className="primary-button compact" onClick={onFind} disabled={isDiscovering}>{isDiscovering ? "Researching…" : total ? "↻ Refresh verified people" : hasPlan ? "Find verified people" : "Build strategy first"}</button>
       </div>
       <div className="filter-row" aria-label="Filter contacts">
         {filters.map((item) => <button key={item} className={filter === item ? "selected" : ""} onClick={() => onFilter(item)}>{item}</button>)}
       </div>
-      {contacts.length > 0 ? (
-        <div className="contact-list">
-          {contacts.map((contact) => (
-            <button className="contact-list-row" key={contact.id} onClick={() => onSelect(contact)}>
-              <span className={`contact-avatar ${contact.color}`}>{contact.initials}</span>
-              <span className="contact-person"><strong>{contact.name}</strong><small>{contact.role} · {contact.company}</small></span>
-              <span className="type-tag">{contact.type}</span>
-              <span className="contact-reason">{contact.reason}</span>
-              <span className={`status ${contacted.includes(contact.id) ? "done" : ""}`}><i />{contacted.includes(contact.id) ? "Contacted" : "Pending"}</span>
-              <span className="fit plain">{contact.fit}%</span>
-              <span className="row-arrow">→</span>
-            </button>
+      {groupedContacts.length > 0 ? (
+        <div className="sector-list">
+          {groupedContacts.map(([sector, sectorContacts]) => (
+            <section className="sector-group" key={sector}>
+              <header><div><span className="eyebrow">SECTOR</span><h2>{sector}</h2></div><strong>{sectorContacts.length} profiles</strong></header>
+              <div className="contact-list">
+                {sectorContacts.map((contact) => (
+                  <button className="contact-list-row" key={contact.id} onClick={() => onSelect(contact)}>
+                    <span className={`contact-avatar ${contact.color}`}>{contact.initials}</span>
+                    <span className="contact-person"><strong>{contact.name}</strong><small>{contact.role} · {contact.company}</small></span>
+                    <span className="type-tag">{contact.type}</span>
+                    <span className="contact-reason">{contact.reason}</span>
+                    <span className="available-routes">{contact.linkedinUrl && <i>in</i>}{contact.contactUrl && <b>Contact</b>}</span>
+                    <span className={`status ${contacted.includes(contact.id) ? "done" : ""}`}><i />{contacted.includes(contact.id) ? "Contacted" : "Pending"}</span>
+                    <span className="fit plain">{contact.fit}%</span>
+                    <span className="row-arrow">→</span>
+                  </button>
+                ))}
+              </div>
+            </section>
           ))}
         </div>
+      ) : total === 0 ? (
+        <div className="empty-state contact-empty"><strong>Your contact map is empty by design</strong><p>Generate the mission strategy, then GPT will find real profiles for its priority sectors.</p><button className="primary-button" onClick={onFind}>{hasPlan ? "Find verified people" : "Build strategic plan"}<span>→</span></button></div>
       ) : <div className="empty-state"><strong>No matches found</strong><p>Try a different name, role, or contact type.</p></div>}
     </>
   );
@@ -733,6 +877,14 @@ function MessagesView({ contacts, contacted, onSelect, onCopy }: {
   onSelect: (contact: Contact) => void;
   onCopy: (contact: Contact) => void;
 }) {
+  if (contacts.length === 0) {
+    return (
+      <>
+        <PageHeader eyebrow="HUMAN OUTREACH" title="Messages with context" subtitle="Outreach starts after the strategic plan and verified contact research." />
+        <div className="empty-state contact-empty"><strong>No contacts to message yet</strong><p>Return to Radar, generate the action plan, and find verified people first.</p></div>
+      </>
+    );
+  }
   const recommendedContact = contacts[0];
   const recommendedMessage = recommendedContact.message ?? `Hi ${recommendedContact.name.split(" ")[0]}, I'm exploring a way to help SMBs reduce late payments. Your experience at ${recommendedContact.company} feels especially relevant. I'm not trying to sell you anything—would you be open to a 20-minute conversation so I can test what I'm learning?`;
   return (
@@ -807,6 +959,7 @@ function ContactCard({ contact, onSelect }: { contact: Contact; onSelect: (conta
     <article className="contact-card">
       <div className="card-topline"><div className={`contact-avatar ${contact.color}`}>{contact.initials}</div><span className="fit"><i /> {contact.fit}% fit</span></div>
       <h3>{contact.name}</h3><p className="role">{contact.role} · {contact.company}</p>
+      <div className="contact-meta"><span>{contact.sector}</span>{contact.linkedinUrl && <b>LinkedIn</b>}{contact.contactUrl && <b>Public contact</b>}</div>
       <div className="why"><span>{contact.aiGenerated ? "WHY THIS PERSON · AI + PUBLIC WEB" : "WHY NOW · EXAMPLE PROFILE"}</span><p>{contact.reason}</p></div>
       <button className="card-button" onClick={() => onSelect(contact)}>Prepare outreach <span>→</span></button>
     </article>
@@ -825,9 +978,13 @@ function ContactDrawer({ contact, isContacted, onClose, onCopy, onContact }: {
       <button className="drawer-backdrop" onClick={onClose} aria-label="Close" />
       <aside className="drawer">
         <button className="close-button" onClick={onClose} aria-label="Close panel">×</button>
-        <div className="drawer-profile"><span className={`contact-avatar large ${contact.color}`}>{contact.initials}</span><div><span className="fit"><i /> {contact.fit}% fit</span><h2>{contact.name}</h2><p>{contact.role} · {contact.company}</p></div></div>
-        <div className="warm-path"><span>{contact.sourceUrl ? "↗" : "≈"}</span><div><strong>{contact.sourceUrl ? "Public source" : "Best way in"}</strong>{contact.sourceUrl ? <a href={contact.sourceUrl} target="_blank" rel="noreferrer">Verify this professional profile</a> : <p>{contact.warm}</p>}</div></div>
-        {contact.sourceUrl && <section className="drawer-section"><span className="eyebrow">HOW TO REACH THEM RESPONSIBLY</span><p>{contact.warm}</p></section>}
+        <div className="drawer-profile"><span className={`contact-avatar large ${contact.color}`}>{contact.initials}</span><div><span className="fit"><i /> {contact.fit}% fit</span><h2>{contact.name}</h2><p>{contact.role} · {contact.company}</p><small>{contact.sector}</small></div></div>
+        <div className="contact-routes">
+          {contact.linkedinUrl && <a href={contact.linkedinUrl} target="_blank" rel="noreferrer"><span>in</span><div><strong>LinkedIn profile</strong><small>Open verified public profile</small></div><b>↗</b></a>}
+          {contact.contactUrl && <a href={contact.contactUrl} target="_blank" rel="noreferrer"><span>✉</span><div><strong>Public contact route</strong><small>{contact.contactMethod || "Official professional contact page"}</small></div><b>↗</b></a>}
+          {contact.sourceUrl && contact.sourceUrl !== contact.linkedinUrl && <a href={contact.sourceUrl} target="_blank" rel="noreferrer"><span>✓</span><div><strong>Verification source</strong><small>Confirm role and professional relevance</small></div><b>↗</b></a>}
+        </div>
+        <section className="drawer-section"><span className="eyebrow">HOW TO REACH THEM RESPONSIBLY</span><p>{contact.warm}</p></section>
         <section className="drawer-section"><span className="eyebrow">CONVERSATION ANGLE</span><p>{contact.angle}</p></section>
         <section className="drawer-section"><span className="eyebrow">SUGGESTED MESSAGE</span><div className="draft-message generated-message"><p>{contact.message ?? `Hi ${contact.name.split(" ")[0]}, I'm exploring a way to help SMBs reduce late payments. Your experience at ${contact.company} feels especially relevant. I'm not trying to sell you anything—would you be open to a 20-minute conversation so I can test what I'm learning?`}</p></div><button className="copy-button" onClick={onCopy}>Copy message <span>⧉</span></button></section>
         <button className={`primary-button drawer-cta ${isContacted ? "completed" : ""}`} onClick={onContact} disabled={isContacted}>{isContacted ? "Already in follow-up" : "Mark as contacted"}<span>{isContacted ? "✓" : "→"}</span></button>
@@ -853,7 +1010,7 @@ function MissionModal({ mode, mission, onClose, onSave }: {
         <label>What do you want to validate?<textarea name="idea" required maxLength={600} defaultValue={mission?.title ?? ""} rows={3} /></label>
         <label>Which profiles do you need to speak with?<input name="audience" required maxLength={400} defaultValue={mission?.audience ?? ""} /></label>
         <label>What do you need to learn?<input name="question" required maxLength={400} defaultValue={mission?.question ?? ""} /></label>
-        {editing && <p className="mission-edit-note">Editing the mission resets its current GPT research because the target has changed.</p>}
+        {editing && <p className="mission-edit-note">Changing the focus clears this mission&apos;s current plan and contacts, then automatically builds a new strategic plan.</p>}
         <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button">{editing ? "Save changes" : "Create mission"} <span>→</span></button></div>
       </form>
     </div>
