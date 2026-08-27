@@ -1,87 +1,165 @@
 "use client";
 
 import type { Session } from "@supabase/supabase-js";
-import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { restorePersistedSession, supabase } from "@/lib/supabase";
-import {
-  addPlanNote,
-  createMission,
-  deletePlanNote,
-  fetchContacts,
-  fetchLatestPlan,
-  fetchMessages,
-  fetchMissions,
-  fetchPlanNotes,
-  fetchPlanVersions,
-  insertContacts,
-  logMessage,
-  markNotesApplied,
-  migrateLegacyWorkspace,
-  savePlanVersion,
-  updateContactStatus,
-  updateMission,
-} from "@/lib/workspace";
-import type {
-  ActionPlan,
-  Contact,
-  ContactStatus,
-  Message,
-  Mission,
-  PlanNote,
-  PlanNoteKind,
-  PlanSegment,
-  PlanVersionSummary,
-  ResearchedProfile,
-} from "@/lib/workspace";
 
-type View = "strategy" | "contacts" | "messages" | "learnings";
+type View = "radar" | "contacts" | "messages" | "learnings";
 type AuthMode = "signin" | "signup" | "forgot" | "reset";
-type Busy = "" | "plan" | "revise" | "contacts";
-type MissionFields = { title: string; audience: string; question: string };
+type MissionModalMode = "new" | "edit";
+type Mission = {
+  id: string;
+  title: string;
+  audience: string;
+  question: string;
+};
+type Contact = {
+  id: number;
+  initials: string;
+  name: string;
+  role: string;
+  company: string;
+  sector: string;
+  reason: string;
+  angle: string;
+  fit: number;
+  type: "Potential customer" | "Founder" | "Expert";
+  color: string;
+  warm: string;
+  message?: string;
+  sourceUrl?: string;
+  linkedinUrl?: string;
+  contactMethod?: string;
+  contactUrl?: string;
+  aiGenerated?: boolean;
+};
+
+type PlanSegment = {
+  sector: string;
+  priority: "Primary" | "Secondary" | "Exploratory";
+  roles: string[];
+  why: string;
+  learningGoal: string;
+  targetCount: number;
+  searchApproach: string;
+};
+
+type ActionPlan = {
+  objective: string;
+  hypothesis: string;
+  recommendedInterviews: number;
+  segments: PlanSegment[];
+  sequence: Array<{ title: string; detail: string; outcome: string }>;
+  questions: string[];
+  successCriteria: string[];
+  model: string;
+};
 
 type PlanResponse = {
-  plan: { segments: PlanSegment[]; revisionSummary: string };
+  stage: "plan";
+  plan: Omit<ActionPlan, "model">;
   model: string;
 };
 
 type ContactResearchResponse = {
-  profiles: ResearchedProfile[];
+  stage: "contacts";
   model: string;
+  profiles: Array<{
+    name: string;
+    initials: string;
+    role: string;
+    company: string;
+    sector: string;
+    reason: string;
+    angle: string;
+    fit: number;
+    type: Contact["type"];
+    searchPath: string;
+    message: string;
+    sourceUrl: string;
+    linkedinUrl: string;
+    contactMethod: string;
+    contactUrl: string;
+  }>;
 };
 
-type Workspace = {
-  plan: ActionPlan | null;
-  versions: PlanVersionSummary[];
-  notes: PlanNote[];
+type MissionResearch = {
   contacts: Contact[];
-  messages: Message[];
+  plan: ActionPlan | null;
+  error: string;
+  discovered: boolean;
+  isPlanning: boolean;
+  isDiscovering: boolean;
+  contacted: number[];
 };
 
-const emptyWorkspace: Workspace = { plan: null, versions: [], notes: [], contacts: [], messages: [] };
+type StoredMissionWorkspace = {
+  version: 1;
+  activeMissionId: string;
+  missions: Mission[];
+};
 
-const tabs: { id: View; label: string }[] = [
-  { id: "strategy", label: "Plan" },
-  { id: "contacts", label: "Contacts" },
-  { id: "messages", label: "Messages" },
-  { id: "learnings", label: "Learnings" },
-];
+const MISSION_METADATA_KEY = "one_hundred_calls_workspace";
+const starterMission: Mission = {
+  id: "late-payments-smbs",
+  title: "Validate a tool that reduces late payments for SMBs",
+  audience: "finance leaders, B2B founders, and collections experts",
+  question: "the problem, urgency, and willingness to pay",
+};
 
-const noteKinds: { id: PlanNoteKind; label: string }[] = [
-  { id: "evidence", label: "Supports" },
-  { id: "counter", label: "Contradicts" },
-  { id: "question", label: "Question" },
-  { id: "decision", label: "Decision" },
-];
+const emptyResearch = (): MissionResearch => ({
+  contacts: [],
+  plan: null,
+  error: "",
+  discovered: false,
+  isPlanning: false,
+  isDiscovering: false,
+  contacted: [],
+});
 
-const activeStatuses: ContactStatus[] = ["contacted", "replied", "scheduled", "done"];
-
-function errorText(error: unknown, fallback: string): string {
-  const message = error instanceof Error && error.message ? error.message : fallback;
-  // The most likely first-run failure is a database that has not been created yet.
-  return /does not exist|schema cache|relation .* missing/i.test(message)
-    ? "Your workspace tables are missing. Run supabase/schema.sql in the Supabase SQL editor, then reload."
-    : message;
+function cleanMissionField(value: unknown, maxLength: number): string {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
 }
+
+function readStoredMission(value: unknown): Mission | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  const mission = {
+    id: cleanMissionField(candidate.id, 100),
+    title: cleanMissionField(candidate.title, 600),
+    audience: cleanMissionField(candidate.audience, 400),
+    question: cleanMissionField(candidate.question, 400),
+  };
+  return Object.values(mission).every(Boolean) ? mission : null;
+}
+
+function readStoredMissionWorkspace(metadata: Record<string, unknown> | undefined): StoredMissionWorkspace | null {
+  const stored = metadata?.[MISSION_METADATA_KEY];
+  if (!stored || typeof stored !== "object") return null;
+  const candidate = stored as Record<string, unknown>;
+  if (candidate.version !== 1 || !Array.isArray(candidate.missions)) return null;
+
+  const missions = candidate.missions.flatMap((mission) => {
+    const parsed = readStoredMission(mission);
+    return parsed ? [parsed] : [];
+  });
+  const uniqueMissions = missions.filter((mission, index) => missions.findIndex((item) => item.id === mission.id) === index);
+  if (uniqueMissions.length === 0) return null;
+
+  const requestedActiveId = cleanMissionField(candidate.activeMissionId, 100);
+  const activeMissionId = uniqueMissions.some((mission) => mission.id === requestedActiveId)
+    ? requestedActiveId
+    : uniqueMissions[0].id;
+
+  return { version: 1, activeMissionId, missions: uniqueMissions };
+}
+
+const tabs: { id: View; label: string; icon: string }[] = [
+  { id: "radar", label: "Radar", icon: "◐" },
+  { id: "contacts", label: "Contacts", icon: "☷" },
+  { id: "messages", label: "Messages", icon: "✎" },
+  { id: "learnings", label: "Learnings", icon: "◇" },
+];
 
 export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
@@ -91,47 +169,70 @@ export default function Home() {
   );
   const [showAccount, setShowAccount] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
-
-  const [view, setView] = useState<View>("strategy");
-  const [missions, setMissions] = useState<Mission[]>([]);
-  const [activeMissionId, setActiveMissionId] = useState("");
-  const [loaded, setLoaded] = useState<{ missionId: string; data: Workspace }>({ missionId: "", data: emptyWorkspace });
-  const [busy, setBusy] = useState<Busy>("");
-  const [error, setError] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [editing, setEditing] = useState(false);
-  const [selectedId, setSelectedId] = useState("");
-  const [expandOpen, setExpandOpen] = useState(false);
+  const missionSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const [view, setView] = useState<View>("radar");
+  const [selected, setSelected] = useState<Contact | null>(null);
+  const [missions, setMissions] = useState<Mission[]>([starterMission]);
+  const [activeMissionId, setActiveMissionId] = useState(starterMission.id);
+  const [missionResearch, setMissionResearch] = useState<Record<string, MissionResearch>>({
+    [starterMission.id]: emptyResearch(),
+  });
+  const [missionListOpen, setMissionListOpen] = useState(true);
   const [filter, setFilter] = useState("All");
   const [query, setQuery] = useState("");
+  const [missionModalMode, setMissionModalMode] = useState<MissionModalMode | null>(null);
   const [toast, setToast] = useState("");
-
-  const notify = useCallback((message: string) => {
-    setToast(message);
-    window.setTimeout(() => setToast(""), 2600);
-  }, []);
 
   useEffect(() => {
     let active = true;
 
+    const applySession = (nextSession: Session | null) => {
+      if (!active) return;
+      setSession(nextSession);
+      if (!nextSession) return;
+
+      const storedWorkspace = readStoredMissionWorkspace(nextSession.user.user_metadata as Record<string, unknown> | undefined);
+      const nextMissions = storedWorkspace?.missions ?? [starterMission];
+      const nextActiveMissionId = storedWorkspace?.activeMissionId ?? starterMission.id;
+
+      setMissions(nextMissions);
+      setActiveMissionId(nextActiveMissionId);
+      setMissionResearch((current) => {
+        const nextResearch: Record<string, MissionResearch> = {};
+        nextMissions.forEach((mission) => {
+          nextResearch[mission.id] = current[mission.id]
+            ?? emptyResearch();
+        });
+        return nextResearch;
+      });
+      setSelected(null);
+      setFilter("All");
+      setQuery("");
+    };
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!active) return;
       if (event === "INITIAL_SESSION") return;
-      setSession(nextSession);
+      if (event === "SIGNED_IN" || event === "PASSWORD_RECOVERY" || event === "SIGNED_OUT") {
+        applySession(nextSession);
+      } else {
+        setSession(nextSession);
+      }
       setAuthLoading(false);
       if (event === "PASSWORD_RECOVERY") setRecoveryMode(true);
-      if (event === "SIGNED_OUT") {
-        setShowAccount(false);
-        setMissions([]);
-        setActiveMissionId("");
-        setLoaded({ missionId: "", data: emptyWorkspace });
-      }
+      if (event === "SIGNED_OUT") setShowAccount(false);
     });
 
     restorePersistedSession()
-      .then((persistedSession) => { if (active) setSession(persistedSession); })
-      .catch(() => { if (active) setSession(null); })
-      .finally(() => { if (active) setAuthLoading(false); });
+      .then((persistedSession) => {
+        applySession(persistedSession);
+      })
+      .catch(() => {
+        applySession(null);
+      })
+      .finally(() => {
+        if (active) setAuthLoading(false);
+      });
 
     return () => {
       active = false;
@@ -157,186 +258,75 @@ export default function Home() {
     };
   }, [showAccount]);
 
-  const userId = session?.user.id ?? "";
-
-  // Load the mission list once per signed-in user, migrating any workspace
-  // that predates the database.
-  useEffect(() => {
-    if (!userId) return;
-    let active = true;
-
-    (async () => {
-      try {
-        const stored = await fetchMissions();
-        const list = stored.length > 0
-          ? stored
-          : await migrateLegacyWorkspace(session?.user.user_metadata as Record<string, unknown> | undefined);
-        if (!active) return;
-        setMissions(list);
-        setActiveMissionId(list[0]?.id ?? "");
-        setError("");
-      } catch (loadError) {
-        if (active) setError(errorText(loadError, "Your workspace could not be loaded."));
-      }
-    })();
-
-    return () => { active = false; };
-  }, [session?.user.user_metadata, userId]);
-
-  // Load everything belonging to the active mission.
-  useEffect(() => {
-    if (!activeMissionId) return;
-    let active = true;
-
-    (async () => {
-      try {
-        const [plan, versions, notes, contacts, messages] = await Promise.all([
-          fetchLatestPlan(activeMissionId),
-          fetchPlanVersions(activeMissionId),
-          fetchPlanNotes(activeMissionId),
-          fetchContacts(activeMissionId),
-          fetchMessages(activeMissionId),
-        ]);
-        if (!active) return;
-        setLoaded({ missionId: activeMissionId, data: { plan, versions, notes, contacts, messages } });
-        setError("");
-      } catch (loadError) {
-        if (!active) return;
-        setLoaded({ missionId: activeMissionId, data: emptyWorkspace });
-        setError(errorText(loadError, "This mission could not be loaded."));
-      }
-    })();
-
-    return () => { active = false; };
-  }, [activeMissionId]);
-
-  const updateWorkspace = useCallback((update: (current: Workspace) => Workspace) => {
-    setLoaded((current) => ({ ...current, data: update(current.data) }));
-  }, []);
-
   const mission = useMemo(
-    () => missions.find((item) => item.id === activeMissionId) ?? null,
+    () => missions.find((item) => item.id === activeMissionId) ?? missions[0] ?? starterMission,
     [activeMissionId, missions],
   );
-  const workspace = loaded.missionId === activeMissionId ? loaded.data : emptyWorkspace;
-  const loadingWorkspace = Boolean(activeMissionId) && loaded.missionId !== activeMissionId;
-  const { plan, versions, notes, contacts, messages } = workspace;
-  const selected = contacts.find((contact) => contact.id === selectedId) ?? null;
-  const pendingNotes = useMemo(() => notes.filter((note) => !note.appliedToPlanId), [notes]);
+  const activeResearch = missionResearch[mission.id] ?? emptyResearch();
+  const contacts = activeResearch.contacts;
+  const { plan, error: aiError, discovered, isPlanning, isDiscovering, contacted } = activeResearch;
   const filteredContacts = useMemo(() => contacts.filter((contact) => {
     const matchesType = filter === "All" || contact.type === filter;
-    const haystack = `${contact.name} ${contact.role} ${contact.company} ${contact.sector}`.toLowerCase();
+    const haystack = `${contact.name} ${contact.role} ${contact.company}`.toLowerCase();
     return matchesType && haystack.includes(query.toLowerCase());
   }), [contacts, filter, query]);
 
+  const notify = (message: string) => {
+    setToast(message);
+    window.setTimeout(() => setToast(""), 2600);
+  };
+
+  const updateMissionResearch = (
+    missionId: string,
+    update: (current: MissionResearch) => MissionResearch,
+  ) => {
+    setMissionResearch((current) => ({
+      ...current,
+      [missionId]: update(current[missionId] ?? emptyResearch()),
+    }));
+  };
+
+  const persistMissionWorkspace = (nextMissions: Mission[], nextActiveMissionId: string) => {
+    const workspace: StoredMissionWorkspace = {
+      version: 1,
+      missions: nextMissions,
+      activeMissionId: nextActiveMissionId,
+    };
+
+    missionSaveQueueRef.current = missionSaveQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const { error } = await supabase.auth.updateUser({
+          data: { [MISSION_METADATA_KEY]: workspace },
+        });
+        if (error) throw error;
+      })
+      .catch(() => {
+        notify("Mission changed, but it could not be saved to your account");
+      });
+  };
+
   const selectMission = (missionId: string) => {
+    if (missionId === mission.id) {
+      setView("radar");
+      return;
+    }
     setActiveMissionId(missionId);
-    setView("strategy");
-    setCreating(false);
-    setEditing(false);
-    setSelectedId("");
+    setView("radar");
+    setSelected(null);
     setFilter("All");
     setQuery("");
+    persistMissionWorkspace(missions, missionId);
+    notify("Mission switched");
   };
 
-  /** Asks the model for a plan and stores it as a new version, without touching view state. */
-  const requestPlan = async (targetMission: Mission, mode: "plan" | "revise"): Promise<ActionPlan> => {
-    const progress = mode === "revise"
-      ? plan?.segments.map((segment) => {
-        const segmentContacts = contacts.filter((contact) => contact.sector === segment.title);
-        return {
-          segment: segment.title,
-          found: segmentContacts.length,
-          contacted: segmentContacts.filter((contact) => activeStatuses.includes(contact.status)).length,
-          replied: segmentContacts.filter((contact) => contact.status === "replied" || contact.status === "done").length,
-        };
-      })
-      : undefined;
-
-    const response = await fetch("/api/ai/research", {
-      method: "POST",
-      headers: {
-        authorization: `Bearer ${session?.access_token ?? ""}`,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        mission: { title: targetMission.title, audience: targetMission.audience, question: targetMission.question },
-        stage: mode,
-        plan: mode === "revise" ? plan?.segments : undefined,
-        notes: mode === "revise"
-          ? pendingNotes.map((note) => ({ segment: note.segment || "mission", kind: note.kind, body: note.body }))
-          : undefined,
-        progress,
-      }),
-    });
-    const result = await response.json() as PlanResponse | { error?: string };
-    if (!response.ok || !("plan" in result)) {
-      throw new Error("error" in result && result.error ? result.error : "The plan could not be generated.");
-    }
-    return savePlanVersion(targetMission.id, { ...result.plan, model: result.model });
-  };
-
-  const createAndPlan = async (fields: MissionFields) => {
-    setBusy("plan");
-    setError("");
-    try {
-      const created = await createMission(fields);
-      await requestPlan(created, "plan");
-      setMissions((current) => [created, ...current]);
-      setCreating(false);
-      setEditing(false);
-      setActiveMissionId(created.id);
-      notify("Plan ready");
-    } catch (planError) {
-      setError(errorText(planError, "The plan could not be generated."));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const saveAndPlan = async (fields: MissionFields) => {
-    if (!mission) return;
-    setBusy("plan");
-    setError("");
-    try {
-      const updated = await updateMission(mission.id, fields);
-      setMissions((current) => current.map((item) => item.id === updated.id ? updated : item));
-      const saved = await requestPlan(updated, "plan");
-      const nextVersions = await fetchPlanVersions(updated.id);
-      updateWorkspace((current) => ({ ...current, plan: saved, versions: nextVersions }));
-      setEditing(false);
-      notify("Plan ready");
-    } catch (planError) {
-      setError(errorText(planError, "The plan could not be generated."));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const revisePlan = async () => {
-    if (!mission) return;
-    setBusy("revise");
-    setError("");
-    try {
-      const saved = await requestPlan(mission, "revise");
-      if (pendingNotes.length > 0) await markNotesApplied(pendingNotes.map((note) => note.id), saved.id);
-      const [nextVersions, nextNotes] = await Promise.all([
-        fetchPlanVersions(mission.id),
-        fetchPlanNotes(mission.id),
-      ]);
-      updateWorkspace((current) => ({ ...current, plan: saved, versions: nextVersions, notes: nextNotes }));
-      notify(`Plan updated to v${saved.version}`);
-    } catch (planError) {
-      setError(errorText(planError, "The plan could not be updated."));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const findPeople = async (guidance = "") => {
-    if (!mission || !plan) return;
-    setBusy("contacts");
-    setError("");
+  const buildPlan = async (targetMission: Mission) => {
+    const targetMissionId = targetMission.id;
+    updateMissionResearch(targetMissionId, (current) => ({
+      ...current,
+      isPlanning: true,
+      error: "",
+    }));
 
     try {
       const response = await fetch("/api/ai/research", {
@@ -345,90 +335,165 @@ export default function Home() {
           authorization: `Bearer ${session?.access_token ?? ""}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({
-          mission: { title: mission.title, audience: mission.audience, question: mission.question },
-          stage: "contacts",
-          plan: plan.segments,
-          guidance,
-          exclude: contacts.map((contact) => `${contact.name} · ${contact.company}`),
-        }),
+        body: JSON.stringify({ mission: targetMission, stage: "plan" }),
+      });
+      const result = await response.json() as PlanResponse | { error?: string };
+      if (!response.ok || !("plan" in result)) {
+        throw new Error("error" in result && result.error ? result.error : "The strategic plan could not be completed.");
+      }
+
+      updateMissionResearch(targetMissionId, (current) => ({
+        ...current,
+        plan: { ...result.plan, model: result.model },
+        error: "",
+        isPlanning: false,
+      }));
+      notify("Strategic action plan ready");
+    } catch (planningError) {
+      const message = planningError instanceof Error ? planningError.message : "The strategic plan could not be completed.";
+      updateMissionResearch(targetMissionId, (current) => ({
+        ...current,
+        error: message,
+        isPlanning: false,
+      }));
+      notify("The action plan needs your attention");
+    }
+  };
+
+  const findContacts = async (refresh = false) => {
+    if (discovered && !refresh) {
+      setView("contacts");
+      return;
+    }
+    if (!plan) {
+      await buildPlan(mission);
+      return;
+    }
+
+    const researchMissionId = mission.id;
+    const researchMission = mission;
+    updateMissionResearch(researchMissionId, (current) => ({
+      ...current,
+      isDiscovering: true,
+      error: "",
+    }));
+    try {
+      const response = await fetch("/api/ai/research", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session?.access_token ?? ""}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({ mission: researchMission, stage: "contacts", plan }),
       });
       const result = await response.json() as ContactResearchResponse | { error?: string };
       if (!response.ok || !("profiles" in result)) {
-        throw new Error("error" in result && result.error ? result.error : "The contact search could not be completed.");
+        throw new Error("error" in result && result.error ? result.error : "AI research could not be completed.");
       }
 
-      const known = new Set(contacts.map((contact) => `${contact.name}|${contact.company}`.toLowerCase()));
-      const fresh = result.profiles.filter((profile) => !known.has(`${profile.name}|${profile.company}`.toLowerCase()));
-      if (fresh.length === 0) {
-        notify("No new people in this batch — try adding guidance");
-        return;
-      }
-
-      const wave = contacts.reduce((highest, contact) => Math.max(highest, contact.wave), 0) + 1;
-      const inserted = await insertContacts(mission.id, fresh, wave);
-      updateWorkspace((current) => ({ ...current, contacts: [...current.contacts, ...inserted] }));
-      setView("contacts");
-      notify(`${inserted.length} people added`);
-    } catch (researchError) {
-      setError(errorText(researchError, "The contact search could not be completed."));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const submitNote = async (segment: string, kind: PlanNoteKind, body: string) => {
-    if (!mission || !body.trim()) return;
-    try {
-      const note = await addPlanNote({
-        missionId: mission.id,
-        planId: plan?.id ?? null,
-        segment,
-        kind,
-        body: body.trim().slice(0, 1200),
-      });
-      updateWorkspace((current) => ({ ...current, notes: [note, ...current.notes] }));
-    } catch (noteError) {
-      setError(errorText(noteError, "The note could not be saved."));
-    }
-  };
-
-  const removeNote = async (id: string) => {
-    try {
-      await deletePlanNote(id);
-      updateWorkspace((current) => ({ ...current, notes: current.notes.filter((note) => note.id !== id) }));
-    } catch (noteError) {
-      setError(errorText(noteError, "The note could not be removed."));
-    }
-  };
-
-  const changeStatus = async (contact: Contact, status: ContactStatus) => {
-    try {
-      await updateContactStatus(contact.id, status);
-      let logged: Message | null = null;
-      if (status === "contacted" && !messages.some((item) => item.contactId === contact.id)) {
-        logged = await logMessage({
-          missionId: contact.missionId,
-          contactId: contact.id,
-          direction: "outbound",
-          channel: contact.linkedinUrl ? "linkedin" : "email",
-          subject: contact.name,
-          body: contact.message,
-        });
-      }
-      updateWorkspace((current) => ({
-        ...current,
-        contacts: current.contacts.map((item) => item.id === contact.id ? { ...item, status } : item),
-        messages: logged ? [...current.messages, logged] : current.messages,
+      const colors = ["coral", "mint", "blue", "yellow", "lilac", "pink"];
+      const researchedContacts: Contact[] = result.profiles.map((profile, index) => ({
+        id: 1000 + index,
+        initials: profile.initials,
+        name: profile.name,
+        role: profile.role,
+        company: profile.company,
+        sector: profile.sector,
+        reason: profile.reason,
+        angle: profile.angle,
+        fit: profile.fit,
+        type: profile.type,
+        color: colors[index % colors.length],
+        warm: profile.searchPath,
+        message: profile.message,
+        sourceUrl: profile.sourceUrl,
+        linkedinUrl: profile.linkedinUrl,
+        contactMethod: profile.contactMethod,
+        contactUrl: profile.contactUrl,
+        aiGenerated: true,
       }));
-    } catch (statusError) {
-      setError(errorText(statusError, "The contact could not be updated."));
+
+      updateMissionResearch(researchMissionId, (current) => ({
+        ...current,
+        contacts: researchedContacts,
+        error: "",
+        discovered: true,
+        isDiscovering: false,
+        contacted: [],
+      }));
+      setSelected(null);
+      notify(`${researchedContacts.length} verified profiles found`);
+    } catch (researchError) {
+      const message = researchError instanceof Error ? researchError.message : "AI research could not be completed.";
+      updateMissionResearch(researchMissionId, (current) => ({
+        ...current,
+        error: message,
+        isDiscovering: false,
+      }));
+      notify("AI research needs your attention");
     }
+  };
+
+  const markContacted = (id: number) => {
+    if (!contacted.includes(id)) {
+      updateMissionResearch(mission.id, (current) => ({
+        ...current,
+        contacted: [...current.contacted, id],
+      }));
+    }
+    setSelected(null);
+    notify("Contact moved to follow-up");
+  };
+
+  const saveMission = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const fields = {
+      title: cleanMissionField(data.get("idea"), 600),
+      audience: cleanMissionField(data.get("audience"), 400),
+      question: cleanMissionField(data.get("question"), 400),
+    };
+    if (!fields.title || !fields.audience || !fields.question || !missionModalMode) return;
+
+    if (missionModalMode === "edit") {
+      const updatedMission = { ...mission, ...fields };
+      const nextMissions = missions.map((item) => item.id === mission.id ? updatedMission : item);
+      setMissions(nextMissions);
+      updateMissionResearch(mission.id, () => emptyResearch());
+      persistMissionWorkspace(nextMissions, mission.id);
+      notify("Mission updated · building a new plan");
+      void buildPlan(updatedMission);
+    } else {
+      const newMission: Mission = {
+        id: crypto.randomUUID(),
+        ...fields,
+      };
+      const nextMissions = [newMission, ...missions];
+      setMissions(nextMissions);
+      setActiveMissionId(newMission.id);
+      setMissionResearch((current) => ({ ...current, [newMission.id]: emptyResearch() }));
+      persistMissionWorkspace(nextMissions, newMission.id);
+      notify("Mission created · building the action plan");
+      void buildPlan(newMission);
+    }
+
+    setMissionModalMode(null);
+    setView("radar");
+    setSelected(null);
+    setFilter("All");
+    setQuery("");
   };
 
   const copyMessage = async (contact: Contact) => {
-    try { await navigator.clipboard.writeText(contact.message); } catch { /* Clipboard can be unavailable in previews. */ }
+    const message = contact.message ?? `Hi ${contact.name.split(" ")[0]}, I'm exploring ${mission.title.toLowerCase()}. Your experience at ${contact.company} feels especially relevant. I'm not trying to sell you anything—would you be open to a 20-minute conversation so I can test what I'm learning?`;
+    try { await navigator.clipboard.writeText(message); } catch { /* Clipboard can be unavailable in previews. */ }
     notify("Message copied");
+  };
+
+  const finishRecovery = () => {
+    setRecoveryMode(false);
+    window.history.replaceState({}, "", window.location.pathname);
+    notify("Password updated successfully");
   };
 
   const signOut = async () => {
@@ -436,63 +501,91 @@ export default function Home() {
     setShowAccount(false);
   };
 
+  useEffect(() => {
+    if (!showAccount) return;
+    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
+      if (!accountMenuRef.current?.contains(event.target as Node)) setShowAccount(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setShowAccount(false);
+    };
+    document.addEventListener("mousedown", handlePointerDown);
+    document.addEventListener("touchstart", handlePointerDown);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", handlePointerDown);
+      document.removeEventListener("touchstart", handlePointerDown);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [showAccount]);
+
   if (authLoading) return <AuthLoading />;
 
   if (!session || recoveryMode) {
     return (
       <AuthScreen
         initialMode={recoveryMode ? "reset" : "signin"}
-        onRecoveryComplete={() => {
-          setRecoveryMode(false);
-          window.history.replaceState({}, "", window.location.pathname);
-        }}
+        onRecoveryComplete={finishRecovery}
       />
     );
   }
 
   const accountEmail = session.user.email ?? "Your account";
-  const sentCount = messages.filter((item) => item.direction === "outbound").length;
-  const replyCount = contacts.filter((contact) => contact.status === "replied" || contact.status === "done").length;
-  const showForm = !mission || creating || (view === "strategy" && (!plan || editing));
+  const accountInitials = accountEmail.slice(0, 2).toUpperCase();
 
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <button className="brand" onClick={() => setView("strategy")} aria-label="Go to plan">100 CALLS</button>
-
-        <div className="mission-picker">
-          <select
-            aria-label="Select mission"
-            value={activeMissionId}
-            onChange={(event) => selectMission(event.target.value)}
-            disabled={missions.length === 0}
+        <button className="brand" onClick={() => setView("radar")} aria-label="Go to radar">
+          <span className="brand-mark">100</span>
+          <span>CALLS</span>
+        </button>
+        <button className="new-mission" onClick={() => setMissionModalMode("new")}><span>+</span> New mission</button>
+        <section className="mission-library" aria-label="Saved missions">
+          <button
+            className="mission-library-toggle"
+            onClick={() => setMissionListOpen((open) => !open)}
+            aria-expanded={missionListOpen}
           >
-            {missions.length === 0 && <option value="">No missions yet</option>}
-            {missions.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
-          </select>
-          <button className="link-button" onClick={() => { setCreating(true); setView("strategy"); }}>New mission</button>
-        </div>
-
+            <span>Missions</span><b>{missions.length}</b><i>{missionListOpen ? "−" : "+"}</i>
+          </button>
+          {missionListOpen && (
+            <div className="mission-library-list">
+              {missions.map((item, index) => (
+                <button
+                  className={`mission-library-item ${item.id === mission.id ? "active" : ""}`}
+                  key={item.id}
+                  onClick={() => selectMission(item.id)}
+                  aria-current={item.id === mission.id ? "true" : undefined}
+                >
+                  <span>{String(missions.length - index).padStart(2, "0")}</span>
+                  <strong>{item.title}</strong>
+                  <i aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
         <nav className="side-nav" aria-label="Main navigation">
           {tabs.map((tab) => (
-            <button className={`nav-item ${view === tab.id ? "active" : ""}`} key={tab.id} onClick={() => { setView(tab.id); setCreating(false); }}>
-              {tab.label}
-              {tab.id === "contacts" && contacts.length > 0 && <b>{contacts.length}</b>}
-              {tab.id === "messages" && sentCount > 0 && <b>{sentCount}</b>}
-              {tab.id === "strategy" && pendingNotes.length > 0 && <b>{pendingNotes.length}</b>}
+            <button className={`nav-item ${view === tab.id ? "active" : ""}`} key={tab.id} onClick={() => setView(tab.id)}>
+              <span>{tab.icon}</span>{tab.label}
+              {tab.id === "contacts" && <b>{contacts.length}</b>}
+              {tab.id === "messages" && <b>{contacted.length}</b>}
             </button>
           ))}
         </nav>
-
         <div className="sidebar-bottom">
-          <span>{sentCount} sent · {replyCount} replies</span>
+          <div className="goal-label"><p>Your goal</p><strong>{12 + contacted.length} / 100</strong></div>
+          <div className="progress-track"><span style={{ width: `${12 + contacted.length}%` }} /></div>
+          <small>Conversations activated</small>
         </div>
       </aside>
 
       <div className="mobile-header">
-        <button className="brand" onClick={() => setView("strategy")}>100 CALLS</button>
+        <button className="brand" onClick={() => setView("radar")}><span className="brand-mark">100</span><span>CALLS</span></button>
         <div className="mobile-header-controls">
-          <select aria-label="Select mission" value={activeMissionId} onChange={(event) => selectMission(event.target.value)}>
+          <select aria-label="Select mission" value={mission.id} onChange={(event) => selectMission(event.target.value)}>
             {missions.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
           </select>
           <select aria-label="Change section" value={view} onChange={(event) => setView(event.target.value as View)}>
@@ -504,597 +597,424 @@ export default function Home() {
       <section className="workspace">
         <div className="account-menu-wrap" ref={accountMenuRef}>
           <button className="account-button" onClick={() => setShowAccount((open) => !open)} aria-expanded={showAccount} aria-label="Open account menu">
-            <span>{accountEmail.slice(0, 2).toUpperCase()}</span>
+            <span>{accountInitials}</span><small>{accountEmail}</small><b>⌄</b>
           </button>
           {showAccount && (
             <div className="account-menu">
+              <span className="eyebrow">SIGNED IN AS</span>
               <strong>{accountEmail}</strong>
               <button onClick={() => { setShowAccount(false); setRecoveryMode(true); }}>Change password</button>
               <button onClick={signOut}>Sign out</button>
             </div>
           )}
         </div>
-
-        {error && <div className="workspace-error" role="alert">{error}<button onClick={() => setError("")} aria-label="Dismiss">×</button></div>}
-
-        {loadingWorkspace ? (
-          <p className="loading-line" aria-live="polite">Loading…</p>
-        ) : showForm ? (
-          <MissionForm
-            key={creating || !mission ? "new" : mission.id}
-            mission={creating ? null : mission}
-            busy={busy === "plan"}
-            onSubmit={creating || !mission ? createAndPlan : saveAndPlan}
-            onCancel={mission && plan ? () => { setCreating(false); setEditing(false); } : undefined}
+        {view === "radar" && (
+          <Radar
+            contacts={contacts.slice(0, 3)}
+            mission={mission}
+            isPlanning={isPlanning}
+            isDiscovering={isDiscovering}
+            discovered={discovered}
+            plan={plan}
+            aiError={aiError}
+            onBuildPlan={() => buildPlan(mission)}
+            onFind={() => findContacts(false)}
+            onSelect={setSelected}
+            onViewAll={() => setView("contacts")}
+            onEditMission={() => setMissionModalMode("edit")}
           />
-        ) : mission ? (
-          <>
-            {view === "strategy" && plan && (
-              <PlanView
-                mission={mission}
-                plan={plan}
-                versions={versions}
-                notes={notes}
-                pendingNotes={pendingNotes.length}
-                contacts={contacts}
-                busy={busy}
-                onEdit={() => setEditing(true)}
-                onRevise={revisePlan}
-                onFind={() => findPeople()}
-                onOpenContacts={() => setView("contacts")}
-                onAddNote={submitNote}
-                onRemoveNote={removeNote}
-              />
-            )}
+        )}
 
-            {view === "contacts" && (
-              <ContactsView
-                contacts={filteredContacts}
-                total={contacts.length}
-                sent={sentCount}
-                replies={replyCount}
-                query={query}
-                filter={filter}
-                busy={busy}
-                onQuery={setQuery}
-                onFilter={setFilter}
-                onSelect={setSelectedId}
-                onExpand={() => setExpandOpen(true)}
-                onBack={() => setView("strategy")}
-              />
-            )}
+        {view === "contacts" && (
+          <ContactsView
+            contacts={filteredContacts}
+            total={contacts.length}
+            query={query}
+            filter={filter}
+            contacted={contacted}
+            hasPlan={Boolean(plan)}
+            isDiscovering={isDiscovering}
+            onQuery={setQuery}
+            onFilter={setFilter}
+            onSelect={setSelected}
+            onFind={() => findContacts(true)}
+          />
+        )}
 
-            {view === "messages" && (
-              <MessagesView
-                contacts={contacts}
-                messages={messages}
-                onSelect={setSelectedId}
-                onCopy={copyMessage}
-                onStatus={changeStatus}
-              />
-            )}
+        {view === "messages" && (
+          <MessagesView contacts={contacts} contacted={contacted} onSelect={setSelected} onCopy={copyMessage} />
+        )}
 
-            {view === "learnings" && <LearningsView notes={notes} contacts={contacts} />}
-          </>
-        ) : null}
+        {view === "learnings" && <LearningsView />}
       </section>
 
       {selected && (
         <ContactDrawer
           contact={selected}
-          history={messages.filter((item) => item.contactId === selected.id)}
-          onClose={() => setSelectedId("")}
+          isContacted={contacted.includes(selected.id)}
+          onClose={() => setSelected(null)}
           onCopy={() => copyMessage(selected)}
-          onStatus={(status) => changeStatus(selected, status)}
+          onContact={() => markContacted(selected.id)}
         />
       )}
 
-      {expandOpen && (
-        <ExpandModal
-          onClose={() => setExpandOpen(false)}
-          onExpand={(guidance) => { setExpandOpen(false); void findPeople(guidance); }}
+      {missionModalMode && (
+        <MissionModal
+          mode={missionModalMode}
+          mission={missionModalMode === "edit" ? mission : null}
+          onClose={() => setMissionModalMode(null)}
+          onSave={saveMission}
         />
       )}
-
-      {toast && <div className="toast" role="status">{toast}</div>}
+      {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}
     </main>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Plan
-// ---------------------------------------------------------------------------
-
-function MissionForm({ mission, busy, onSubmit, onCancel }: {
-  mission: Mission | null;
-  busy: boolean;
-  onSubmit: (fields: MissionFields) => void;
-  onCancel?: () => void;
-}) {
-  const [title, setTitle] = useState(mission?.title ?? "");
-  const [audience, setAudience] = useState(mission?.audience ?? "");
-  const [question, setQuestion] = useState(mission?.question ?? "");
-  const ready = Boolean(title.trim() && audience.trim() && question.trim());
-
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    if (!ready || busy) return;
-    onSubmit({ title: title.trim().slice(0, 600), audience: audience.trim().slice(0, 400), question: question.trim().slice(0, 400) });
-  };
-
-  return (
-    <form className="mission-form" onSubmit={submit}>
-      <h1>What are you looking for?</h1>
-      <label>
-        What you want to validate
-        <textarea value={title} onChange={(event) => setTitle(event.target.value)} rows={2} maxLength={600} />
-      </label>
-      <label>
-        Who can tell you
-        <input value={audience} onChange={(event) => setAudience(event.target.value)} maxLength={400} />
-      </label>
-      <label>
-        What you need to learn
-        <input value={question} onChange={(event) => setQuestion(event.target.value)} maxLength={400} />
-      </label>
-      <div className="form-actions">
-        {ready && (
-          <button className="primary-button" disabled={busy}>
-            {busy ? "Generating…" : mission ? "Regenerate plan" : "Generate plan"}
-          </button>
-        )}
-        {onCancel && <button type="button" className="link-button" onClick={onCancel}>Cancel</button>}
-      </div>
-    </form>
-  );
+function groupContactsBySector(contacts: Contact[]): Array<[string, Contact[]]> {
+  const grouped = new Map<string, Contact[]>();
+  contacts.forEach((contact) => grouped.set(contact.sector, [...(grouped.get(contact.sector) ?? []), contact]));
+  return [...grouped.entries()];
 }
 
-function PlanView({
-  mission, plan, versions, notes, pendingNotes, contacts, busy,
-  onEdit, onRevise, onFind, onOpenContacts, onAddNote, onRemoveNote,
-}: {
-  mission: Mission;
-  plan: ActionPlan;
-  versions: PlanVersionSummary[];
-  notes: PlanNote[];
-  pendingNotes: number;
+function Radar({ contacts, mission, isPlanning, isDiscovering, discovered, plan, aiError, onBuildPlan, onFind, onSelect, onViewAll, onEditMission }: {
   contacts: Contact[];
-  busy: Busy;
-  onEdit: () => void;
-  onRevise: () => void;
+  mission: Mission;
+  isPlanning: boolean;
+  isDiscovering: boolean;
+  discovered: boolean;
+  plan: ActionPlan | null;
+  aiError: string;
+  onBuildPlan: () => void;
   onFind: () => void;
-  onOpenContacts: () => void;
-  onAddNote: (segment: string, kind: PlanNoteKind, body: string) => void;
-  onRemoveNote: (id: string) => void;
+  onSelect: (contact: Contact) => void;
+  onViewAll: () => void;
+  onEditMission: () => void;
 }) {
-  const working = busy !== "";
+  const groupedContacts = groupContactsBySector(contacts);
+  const primaryAction = plan ? onFind : onBuildPlan;
+  const actionLabel = isPlanning
+    ? "Building your strategy"
+    : isDiscovering
+      ? "Researching verified profiles"
+      : !plan
+        ? "Build strategic action plan"
+        : discovered
+          ? "Explore contact map"
+          : "Find people for this plan";
 
   return (
     <>
-      <header className="plan-header">
-        <h1>{mission.title}</h1>
-        <button className="link-button" onClick={onEdit}>Edit</button>
+      <header className="topbar">
+        <div><span className="eyebrow">MISSION WORKSPACE</span><h1>Turn a market question into a contact strategy.</h1></div>
       </header>
 
-      <div className="plan-bar">
-        <span>v{plan.version} · {versions.length} versions · {contacts.length} people</span>
-        <div>
-          <button className="link-button" onClick={onRevise} disabled={working}>
-            {busy === "revise" ? "Updating…" : pendingNotes > 0 ? `Update plan (${pendingNotes})` : "Update plan"}
-          </button>
-          <button
-            className="primary-button compact"
-            onClick={contacts.length > 0 ? onOpenContacts : onFind}
-            disabled={working}
-          >
-            {busy === "contacts" ? "Searching…" : contacts.length > 0 ? "Open contacts" : "Find people"}
-          </button>
+      <section className="mission-card">
+        <div className="mission-copy">
+          <div className="mission-label">
+            <span className="pill">ACTIVE MISSION</span>
+            <button className="edit-mission-button" onClick={onEditMission}><span>✎</span> Edit mission focus</button>
+          </div>
+          <h2>{mission.title}</h2>
+          <p>We are looking for {mission.audience} to test {mission.question}.</p>
+          <small className="ai-note">First build the strategy. Then GPT researches public professional sources and only returns verifiable routes.</small>
+          {aiError && <div className="mission-error" role="alert"><span>!</span>{aiError}</div>}
         </div>
+        <button className="primary-button mission-primary" onClick={primaryAction} disabled={isPlanning || isDiscovering}>
+          {(isPlanning || isDiscovering) && <i className="spinner" />}{actionLabel}{!isPlanning && !isDiscovering && <span>→</span>}
+        </button>
+      </section>
+
+      <div className="signal-row">
+        <div><strong>{plan?.segments.length ?? 0}</strong><span>priority sectors</span></div>
+        <div><strong>{plan?.recommendedInterviews ?? 0}</strong><span>target interviews</span></div>
+        <div><strong>{contacts.length}</strong><span>verified profiles</span></div>
+        <p><span className="pulse" /> {discovered ? "Contact map ready" : plan ? "Strategy ready for research" : "Building from the mission focus"}</p>
       </div>
 
-      {plan.revisionSummary && <p className="revision">{plan.revisionSummary}</p>}
+      {isPlanning && (
+        <section className="plan-loading" aria-live="polite">
+          <i className="spinner dark" />
+          <div><span className="eyebrow">GPT STRATEGIST</span><h2>Designing who to contact, why, and in what order.</h2><p>Defining sectors, target roles, interview sequence, questions, and decision criteria.</p></div>
+        </section>
+      )}
 
-      <ol className="segments">
-        {plan.segments.map((segment, index) => (
-          <li className={`segment change-${segment.change}`} key={segment.title}>
-            <div className="segment-head">
-              <span>{String(index + 1).padStart(2, "0")}</span>
-              <h2>{segment.title}</h2>
-              <b>{contacts.filter((contact) => contact.sector === segment.title).length}/{segment.targetCount}</b>
+      {plan && (
+        <ActionPlanSection plan={plan} isDiscovering={isDiscovering} discovered={discovered} onFind={onFind} />
+      )}
+
+      {!plan && !isPlanning && (
+        <section className="plan-empty">
+          <span className="plan-empty-number">01</span>
+          <div><span className="eyebrow">START WITH STRATEGY</span><h2>Your contact list is intentionally empty.</h2><p>Generate the action plan first. It will define the sectors, roles, sequence, questions, and evidence needed before finding individual people.</p></div>
+          <button className="primary-button" onClick={onBuildPlan}>Build action plan <span>→</span></button>
+        </section>
+      )}
+
+      {groupedContacts.length > 0 && (
+        <section className="radar-contact-map">
+          <div className="section-heading">
+            <div><span className="eyebrow">VERIFIED CONTACT MAP</span><h2>Profiles grouped by sector</h2></div>
+            <button className="text-button" onClick={onViewAll}>View full map <span>↗</span></button>
+          </div>
+          {groupedContacts.map(([sector, sectorContacts]) => (
+            <div className="sector-preview" key={sector}>
+              <div className="sector-preview-heading"><h3>{sector}</h3><span>{sectorContacts.length} profiles</span></div>
+              <div className="contact-grid">
+                {sectorContacts.map((contact) => <ContactCard key={contact.id} contact={contact} onSelect={onSelect} />)}
+              </div>
             </div>
-            <ul className="subsegments">
-              {segment.subsegments.map((item) => <li key={item}>{item}</li>)}
-            </ul>
-            {segment.change !== "unchanged" && segment.changeNote && <p className="change-note">{segment.changeNote}</p>}
-            <NoteThread
-              segment={segment.title}
-              notes={notes.filter((note) => note.segment === segment.title)}
-              onAddNote={onAddNote}
-              onRemoveNote={onRemoveNote}
-            />
-          </li>
-        ))}
-      </ol>
-
-      <NoteThread
-        segment=""
-        label="Mission notes"
-        notes={notes.filter((note) => !note.segment)}
-        onAddNote={onAddNote}
-        onRemoveNote={onRemoveNote}
-      />
+          ))}
+        </section>
+      )}
     </>
   );
 }
 
-function NoteThread({ segment, label, notes, onAddNote, onRemoveNote }: {
-  segment: string;
-  label?: string;
-  notes: PlanNote[];
-  onAddNote: (segment: string, kind: PlanNoteKind, body: string) => void;
-  onRemoveNote: (id: string) => void;
+function ActionPlanSection({ plan, isDiscovering, discovered, onFind }: {
+  plan: ActionPlan;
+  isDiscovering: boolean;
+  discovered: boolean;
+  onFind: () => void;
 }) {
-  const [open, setOpen] = useState(false);
-  const [kind, setKind] = useState<PlanNoteKind>("evidence");
-  const [body, setBody] = useState("");
-
-  const submit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    onAddNote(segment, kind, body);
-    setBody("");
-    setOpen(false);
-  };
-
   return (
-    <div className="notes">
-      {notes.length > 0 && (
-        <ul className="note-list">
-          {notes.map((note) => (
-            <li key={note.id} className={`note note-${note.kind}${note.appliedToPlanId ? "" : " pending"}`}>
-              <b>{noteKinds.find((item) => item.id === note.kind)?.label}</b>
-              <p>{note.body}</p>
-              <button onClick={() => onRemoveNote(note.id)} aria-label="Delete note">×</button>
-            </li>
-          ))}
-        </ul>
-      )}
+    <section className="action-plan">
+      <header className="action-plan-header">
+        <div><span className="eyebrow">STRATEGIC ACTION PLAN</span><h2>{plan.objective}</h2></div>
+        <div className="plan-target"><strong>{plan.recommendedInterviews}</strong><span>recommended interviews</span></div>
+      </header>
 
-      {open ? (
-        <form className="note-composer" onSubmit={submit}>
-          <div className="note-kinds">
-            {noteKinds.map((item) => (
-              <button
-                type="button"
-                key={item.id}
-                className={kind === item.id ? "selected" : ""}
-                onClick={() => setKind(item.id)}
-              >{item.label}</button>
-            ))}
-          </div>
-          <textarea
-            value={body}
-            onChange={(event) => setBody(event.target.value)}
-            maxLength={1200}
-            rows={2}
-            required
-          />
-          <div className="form-actions">
-            <button className="primary-button compact" type="submit">Save</button>
-            <button type="button" className="link-button" onClick={() => setOpen(false)}>Cancel</button>
-          </div>
-        </form>
-      ) : (
-        <button className="link-button add-note" onClick={() => setOpen(true)}>{label ? `${label} +` : "Add note"}</button>
-      )}
-    </div>
+      <div className="plan-hypothesis"><span>RISKIEST ASSUMPTION</span><p>{plan.hypothesis}</p></div>
+
+      <div className="plan-section-title"><span>01</span><div><strong>Who to contact</strong><small>Prioritized sectors and exact roles</small></div></div>
+      <div className="segment-grid">
+        {plan.segments.map((segment) => (
+          <article className="segment-card" key={segment.sector}>
+            <div className="segment-top"><span className={`priority priority-${segment.priority.toLowerCase()}`}>{segment.priority}</span><strong>{segment.targetCount} calls</strong></div>
+            <h3>{segment.sector}</h3>
+            <div className="role-chips">{segment.roles.map((role) => <span key={role}>{role}</span>)}</div>
+            <dl><div><dt>Why them</dt><dd>{segment.why}</dd></div><div><dt>Learn</dt><dd>{segment.learningGoal}</dd></div><div><dt>Find them</dt><dd>{segment.searchApproach}</dd></div></dl>
+          </article>
+        ))}
+      </div>
+
+      <div className="plan-detail-grid">
+        <section>
+          <div className="plan-section-title"><span>02</span><div><strong>Execution sequence</strong><small>Work from assumptions to evidence</small></div></div>
+          <ol className="plan-sequence">{plan.sequence.map((step, index) => <li key={`${step.title}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span><div><strong>{step.title}</strong><p>{step.detail}</p><small>OUTPUT · {step.outcome}</small></div></li>)}</ol>
+        </section>
+        <section>
+          <div className="plan-section-title"><span>03</span><div><strong>Interview guide</strong><small>Questions that avoid leading the witness</small></div></div>
+          <ol className="plan-questions">{plan.questions.map((question, index) => <li key={`${question}-${index}`}><span>{String(index + 1).padStart(2, "0")}</span>{question}</li>)}</ol>
+        </section>
+      </div>
+
+      <footer className="plan-footer">
+        <div><span className="eyebrow">DECISION CRITERIA</span><ul>{plan.successCriteria.map((criterion) => <li key={criterion}>{criterion}</li>)}</ul><small>Plan generated with {plan.model}</small></div>
+        <button className="primary-button" onClick={onFind} disabled={isDiscovering}>{isDiscovering ? <><i className="spinner" /> Researching the web</> : <>{discovered ? "Refresh verified contacts" : "Find verified people"}<span>→</span></>}</button>
+      </footer>
+    </section>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Contacts
-// ---------------------------------------------------------------------------
-
-function ContactsView({
-  contacts, total, sent, replies, query, filter, busy,
-  onQuery, onFilter, onSelect, onExpand, onBack,
-}: {
+function ContactsView({ contacts, total, query, filter, contacted, hasPlan, isDiscovering, onQuery, onFilter, onSelect, onFind }: {
   contacts: Contact[];
   total: number;
-  sent: number;
-  replies: number;
   query: string;
   filter: string;
-  busy: Busy;
+  contacted: number[];
+  hasPlan: boolean;
+  isDiscovering: boolean;
   onQuery: (value: string) => void;
   onFilter: (value: string) => void;
-  onSelect: (id: string) => void;
-  onExpand: () => void;
-  onBack: () => void;
+  onSelect: (contact: Contact) => void;
+  onFind: () => void;
 }) {
   const filters = ["All", "Potential customer", "Founder", "Expert"];
-  const grouped = groupBySegment(contacts);
-
-  if (total === 0) {
-    return (
-      <>
-        <h1>Contacts</h1>
-        <p className="empty-line">Nothing here yet.</p>
-        <button className="primary-button" onClick={onBack}>Go to plan</button>
-      </>
-    );
-  }
-
+  const groupedContacts = groupContactsBySector(contacts);
   return (
     <>
-      <h1>Contacts</h1>
-
-      <div className="toolbar">
-        <input
-          className="search"
-          value={query}
-          onChange={(event) => onQuery(event.target.value)}
-          placeholder="Search"
-          aria-label="Search contacts"
-        />
-        <div className="filters">
-          {filters.map((item) => (
-            <button key={item} className={filter === item ? "selected" : ""} onClick={() => onFilter(item)}>{item}</button>
-          ))}
-        </div>
+      <PageHeader eyebrow="PEOPLE MAP" title="Strategic contacts by sector" subtitle={total ? `${total} profiles prioritized for learning value, with verified public sources and contact routes when available.` : "No example profiles. Build the strategy first, then research real people for this mission."} />
+      <div className="contact-toolbar">
+        <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search by name, role, or company" /></label>
+        <button className="primary-button compact" onClick={onFind} disabled={isDiscovering}>{isDiscovering ? "Researching…" : total ? "↻ Refresh verified people" : hasPlan ? "Find verified people" : "Build strategy first"}</button>
       </div>
-
-      {grouped.length === 0 ? (
-        <p className="empty-line">No matches.</p>
-      ) : (
-        <div className="groups">
-          {grouped.map(([segment, segmentContacts]) => (
-            <details className="group" key={segment} open>
-              <summary><h2>{segment}</h2><span>{segmentContacts.length}</span></summary>
-              <div className="rows">
-                {segmentContacts.map((contact) => (
-                  <button className="row" key={contact.id} onClick={() => onSelect(contact.id)}>
-                    <span className="row-name"><strong>{contact.name}</strong><small>{contact.role} · {contact.company}</small></span>
-                    <span className="row-type">{contact.type}</span>
-                    <span className={`status status-${contact.status}`}>{statusLabel(contact.status)}</span>
+      <div className="filter-row" aria-label="Filter contacts">
+        {filters.map((item) => <button key={item} className={filter === item ? "selected" : ""} onClick={() => onFilter(item)}>{item}</button>)}
+      </div>
+      {groupedContacts.length > 0 ? (
+        <div className="sector-list">
+          {groupedContacts.map(([sector, sectorContacts]) => (
+            <section className="sector-group" key={sector}>
+              <header><div><span className="eyebrow">SECTOR</span><h2>{sector}</h2></div><strong>{sectorContacts.length} profiles</strong></header>
+              <div className="contact-list">
+                {sectorContacts.map((contact) => (
+                  <button className="contact-list-row" key={contact.id} onClick={() => onSelect(contact)}>
+                    <span className={`contact-avatar ${contact.color}`}>{contact.initials}</span>
+                    <span className="contact-person"><strong>{contact.name}</strong><small>{contact.role} · {contact.company}</small></span>
+                    <span className="type-tag">{contact.type}</span>
+                    <span className="contact-reason">{contact.reason}</span>
+                    <span className="available-routes">{contact.linkedinUrl && <i>in</i>}{contact.contactUrl && <b>Contact</b>}</span>
+                    <span className={`status ${contacted.includes(contact.id) ? "done" : ""}`}><i />{contacted.includes(contact.id) ? "Contacted" : "Pending"}</span>
+                    <span className="fit plain">{contact.fit}%</span>
+                    <span className="row-arrow">→</span>
                   </button>
                 ))}
               </div>
-            </details>
+            </section>
           ))}
         </div>
-      )}
-
-      <footer className="list-footer">
-        <span>{total} people · {sent} sent · {replies} replies</span>
-        <button className="link-button" onClick={onExpand} disabled={busy !== ""}>
-          {busy === "contacts" ? "Searching…" : "Expand list"}
-        </button>
-      </footer>
+      ) : total === 0 ? (
+        <div className="empty-state contact-empty"><strong>Your contact map is empty by design</strong><p>Generate the mission strategy, then GPT will find real profiles for its priority sectors.</p><button className="primary-button" onClick={onFind}>{hasPlan ? "Find verified people" : "Build strategic plan"}<span>→</span></button></div>
+      ) : <div className="empty-state"><strong>No matches found</strong><p>Try a different name, role, or contact type.</p></div>}
     </>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Messages
-// ---------------------------------------------------------------------------
-
-function MessagesView({ contacts, messages, onSelect, onCopy, onStatus }: {
+function MessagesView({ contacts, contacted, onSelect, onCopy }: {
   contacts: Contact[];
-  messages: Message[];
-  onSelect: (id: string) => void;
+  contacted: number[];
+  onSelect: (contact: Contact) => void;
   onCopy: (contact: Contact) => void;
-  onStatus: (contact: Contact, status: ContactStatus) => void;
 }) {
   if (contacts.length === 0) {
     return (
       <>
-        <h1>Messages</h1>
-        <p className="empty-line">Find people first.</p>
+        <PageHeader eyebrow="HUMAN OUTREACH" title="Messages with context" subtitle="Outreach starts after the strategic plan and verified contact research." />
+        <div className="empty-state contact-empty"><strong>No contacts to message yet</strong><p>Return to Radar, generate the action plan, and find verified people first.</p></div>
       </>
     );
   }
-
-  const ordered = [...contacts].sort((first, second) =>
-    statusWeight(second.status) - statusWeight(first.status) || second.fit - first.fit);
-
+  const recommendedContact = contacts[0];
+  const recommendedMessage = recommendedContact.message ?? `Hi ${recommendedContact.name.split(" ")[0]}, I'm exploring a way to help SMBs reduce late payments. Your experience at ${recommendedContact.company} feels especially relevant. I'm not trying to sell you anything—would you be open to a 20-minute conversation so I can test what I'm learning?`;
   return (
     <>
-      <h1>Messages</h1>
-      <div className="followups">
-        {ordered.map((contact) => {
-          const history = messages.filter((item) => item.contactId === contact.id);
-          return (
-            <article className="followup" key={contact.id}>
-              <header>
-                <div><strong>{contact.name}</strong><small>{contact.role} · {contact.company}</small></div>
-                <span className={`status status-${contact.status}`}>{statusLabel(contact.status)}</span>
-              </header>
-
-              <p className="draft">{contact.message}</p>
-
-              {history.length > 0 && (
-                <ul className="history">
-                  {history.map((item) => (
-                    <li key={item.id} className={item.direction}>
-                      {item.direction === "outbound" ? "Sent" : "Received"} · {item.channel} · {new Date(item.occurredAt).toLocaleDateString()}
-                    </li>
-                  ))}
-                </ul>
-              )}
-
-              <div className="actions">
-                {contact.linkedinUrl && <a href={contact.linkedinUrl} target="_blank" rel="noreferrer">LinkedIn</a>}
-                {contact.contactUrl && <a href={contact.contactUrl} target="_blank" rel="noreferrer">Contact page</a>}
-                <button onClick={() => onCopy(contact)}>Copy</button>
-                {contact.status === "new" || contact.status === "queued"
-                  ? <button onClick={() => onStatus(contact, "contacted")}>Mark sent</button>
-                  : contact.status === "contacted"
-                    ? <button onClick={() => onStatus(contact, "replied")}>Mark replied</button>
-                    : null}
-                <button onClick={() => onSelect(contact.id)}>Open</button>
-              </div>
-            </article>
-          );
-        })}
+      <PageHeader eyebrow="HUMAN OUTREACH" title="Messages with context" subtitle="Personalize the reason, ask for little, and learn a lot." />
+      <div className="message-layout">
+        <section className="queue-panel">
+          <div className="panel-heading"><span>OUTREACH QUEUE</span><b>{contacts.length}</b></div>
+          {contacts.map((contact, index) => (
+            <button className="queue-row" key={contact.id} onClick={() => onSelect(contact)}>
+              <span className="queue-number">{String(index + 1).padStart(2, "0")}</span>
+              <span className={`contact-avatar small ${contact.color}`}>{contact.initials}</span>
+              <span><strong>{contact.name}</strong><small>{contact.company}</small></span>
+              <i className={contacted.includes(contact.id) ? "sent" : ""} />
+            </button>
+          ))}
+        </section>
+        <section className="message-preview">
+          <span className="eyebrow">RECOMMENDED TEMPLATE</span>
+          <h2>A short, specific invitation with no sales pitch.</h2>
+          <div className="message-paper generated-message"><p>{recommendedMessage}</p></div>
+          <div className="message-tip"><span>↗</span><p><strong>Improve your response rate</strong>Add one specific reason why you chose that person.</p></div>
+          <button className="primary-button" onClick={() => onCopy(recommendedContact)}>Copy message for {recommendedContact.name.split(" ")[0]} <span>→</span></button>
+        </section>
       </div>
     </>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Learnings
-// ---------------------------------------------------------------------------
-
-function LearningsView({ notes, contacts }: { notes: PlanNote[]; contacts: Contact[] }) {
-  if (notes.length === 0) {
-    return (
-      <>
-        <h1>Learnings</h1>
-        <p className="empty-line">Add notes to the plan after each conversation.</p>
-      </>
-    );
-  }
-
-  const byKind = (kind: PlanNoteKind) => notes.filter((note) => note.kind === kind);
-  const replied = contacts.filter((contact) => contact.status === "replied" || contact.status === "done").length;
-
+function LearningsView() {
   return (
     <>
-      <h1>Learnings</h1>
-      <p className="counts">
-        {byKind("evidence").length} supporting · {byKind("counter").length} contradicting · {byKind("question").length} open · {replied} replies
-      </p>
-
-      <div className="groups">
-        {groupNotes(notes).map(([segment, segmentNotes]) => (
-          <section className="group static" key={segment}>
-            <h2>{segment}</h2>
-            <ul className="note-list">
-              {segmentNotes.map((note) => (
-                <li key={note.id} className={`note note-${note.kind}`}>
-                  <b>{noteKinds.find((item) => item.id === note.kind)?.label}</b>
-                  <p>{note.body}</p>
-                </li>
-              ))}
-            </ul>
-          </section>
-        ))}
+      <PageHeader eyebrow="DON'T COLLECT NOTES, FIND SIGNALS" title="What you are learning" subtitle="A working synthesis of 12 conversations." />
+      <div className="learning-grid">
+        <article className="learning-hero">
+          <span className="pill">STRONG SIGNAL</span>
+          <strong>8 of 12</strong>
+          <h2>Manual follow-up takes more time than the late payment itself.</h2>
+          <p>Urgency appears once a business manages more than 30 recurring invoices. Before that point, spreadsheets remain “good enough.”</p>
+        </article>
+        <article className="hypothesis-card">
+          <div className="hypothesis-top"><span>HYPOTHESIS 01</span><b className="validated">TESTING</b></div>
+          <h3>SMBs would pay to automate payment reminders.</h3>
+          <div className="evidence"><span style={{ width: "68%" }} /></div>
+          <p>5 supporting signals · 2 against</p>
+        </article>
+        <article className="hypothesis-card">
+          <div className="hypothesis-top"><span>HYPOTHESIS 02</span><b>OPEN</b></div>
+          <h3>The CFO is the purchase decision-maker.</h3>
+          <div className="evidence"><span style={{ width: "42%" }} /></div>
+          <p>3 supporting signals · 4 to clarify</p>
+        </article>
       </div>
+      <section className="next-questions">
+        <div><span className="eyebrow">NEXT QUESTIONS</span><h2>What you still need to discover</h2></div>
+        <ol>
+          <li><span>01</span>What does it cost today to resolve a late payment from start to finish?</li>
+          <li><span>02</span>What event makes an SMB start looking for a solution?</li>
+          <li><span>03</span>Who would use the tool, and who would approve the spend?</li>
+        </ol>
+      </section>
     </>
   );
 }
 
-// ---------------------------------------------------------------------------
-// Shared pieces
-// ---------------------------------------------------------------------------
+function PageHeader({ eyebrow, title, subtitle }: { eyebrow: string; title: string; subtitle: string }) {
+  return <header className="page-header"><span className="eyebrow">{eyebrow}</span><h1>{title}</h1><p>{subtitle}</p></header>;
+}
 
-function ContactDrawer({ contact, history, onClose, onCopy, onStatus }: {
+function ContactCard({ contact, onSelect }: { contact: Contact; onSelect: (contact: Contact) => void }) {
+  return (
+    <article className="contact-card">
+      <div className="card-topline"><div className={`contact-avatar ${contact.color}`}>{contact.initials}</div><span className="fit"><i /> {contact.fit}% fit</span></div>
+      <h3>{contact.name}</h3><p className="role">{contact.role} · {contact.company}</p>
+      <div className="contact-meta"><span>{contact.sector}</span>{contact.linkedinUrl && <b>LinkedIn</b>}{contact.contactUrl && <b>Public contact</b>}</div>
+      <div className="why"><span>{contact.aiGenerated ? "WHY THIS PERSON · AI + PUBLIC WEB" : "WHY NOW · EXAMPLE PROFILE"}</span><p>{contact.reason}</p></div>
+      <button className="card-button" onClick={() => onSelect(contact)}>Prepare outreach <span>→</span></button>
+    </article>
+  );
+}
+
+function ContactDrawer({ contact, isContacted, onClose, onCopy, onContact }: {
   contact: Contact;
-  history: Message[];
+  isContacted: boolean;
   onClose: () => void;
   onCopy: () => void;
-  onStatus: (status: ContactStatus) => void;
+  onContact: () => void;
 }) {
   return (
-    <div className="drawer-layer" role="dialog" aria-modal="true" aria-label={contact.name}>
+    <div className="drawer-layer" role="dialog" aria-modal="true" aria-label={`Prepare outreach to ${contact.name}`}>
       <button className="drawer-backdrop" onClick={onClose} aria-label="Close" />
       <aside className="drawer">
         <button className="close-button" onClick={onClose} aria-label="Close panel">×</button>
-
-        <h2>{contact.name}</h2>
-        <p className="drawer-role">{contact.role} · {contact.company}</p>
-        <p className="drawer-meta">{contact.sector} · {contact.type} · {contact.fit}% fit</p>
-
-        <div className="links">
-          {contact.linkedinUrl && <a href={contact.linkedinUrl} target="_blank" rel="noreferrer">LinkedIn</a>}
-          {contact.contactUrl && <a href={contact.contactUrl} target="_blank" rel="noreferrer">Contact page</a>}
-          {contact.sourceUrl && contact.sourceUrl !== contact.linkedinUrl && (
-            <a href={contact.sourceUrl} target="_blank" rel="noreferrer">Source</a>
-          )}
+        <div className="drawer-profile"><span className={`contact-avatar large ${contact.color}`}>{contact.initials}</span><div><span className="fit"><i /> {contact.fit}% fit</span><h2>{contact.name}</h2><p>{contact.role} · {contact.company}</p><small>{contact.sector}</small></div></div>
+        <div className="contact-routes">
+          {contact.linkedinUrl && <a href={contact.linkedinUrl} target="_blank" rel="noreferrer"><span>in</span><div><strong>LinkedIn profile</strong><small>Open verified public profile</small></div><b>↗</b></a>}
+          {contact.contactUrl && <a href={contact.contactUrl} target="_blank" rel="noreferrer"><span>✉</span><div><strong>Public contact route</strong><small>{contact.contactMethod || "Official professional contact page"}</small></div><b>↗</b></a>}
+          {contact.sourceUrl && contact.sourceUrl !== contact.linkedinUrl && <a href={contact.sourceUrl} target="_blank" rel="noreferrer"><span>✓</span><div><strong>Verification source</strong><small>Confirm role and professional relevance</small></div><b>↗</b></a>}
         </div>
-
-        <p className="drawer-text">{contact.reason}</p>
-        <p className="drawer-text">{contact.angle}</p>
-
-        <div className="draft">{contact.message}</div>
-        <button className="link-button" onClick={onCopy}>Copy message</button>
-
-        {history.length > 0 && (
-          <ul className="history">
-            {history.map((item) => (
-              <li key={item.id} className={item.direction}>
-                {item.direction === "outbound" ? "Sent" : "Received"} · {item.channel} · {new Date(item.occurredAt).toLocaleDateString()}
-              </li>
-            ))}
-          </ul>
-        )}
-
-        <div className="drawer-status">
-          {(["contacted", "replied", "scheduled", "done", "passed"] as ContactStatus[]).map((status) => (
-            <button
-              key={status}
-              className={contact.status === status ? "selected" : ""}
-              onClick={() => onStatus(status)}
-            >{statusLabel(status)}</button>
-          ))}
-        </div>
+        <section className="drawer-section"><span className="eyebrow">HOW TO REACH THEM RESPONSIBLY</span><p>{contact.warm}</p></section>
+        <section className="drawer-section"><span className="eyebrow">CONVERSATION ANGLE</span><p>{contact.angle}</p></section>
+        <section className="drawer-section"><span className="eyebrow">SUGGESTED MESSAGE</span><div className="draft-message generated-message"><p>{contact.message ?? `Hi ${contact.name.split(" ")[0]}, I'm exploring a way to help SMBs reduce late payments. Your experience at ${contact.company} feels especially relevant. I'm not trying to sell you anything—would you be open to a 20-minute conversation so I can test what I'm learning?`}</p></div><button className="copy-button" onClick={onCopy}>Copy message <span>⧉</span></button></section>
+        <button className={`primary-button drawer-cta ${isContacted ? "completed" : ""}`} onClick={onContact} disabled={isContacted}>{isContacted ? "Already in follow-up" : "Mark as contacted"}<span>{isContacted ? "✓" : "→"}</span></button>
       </aside>
     </div>
   );
 }
 
-function ExpandModal({ onClose, onExpand }: { onClose: () => void; onExpand: (guidance: string) => void }) {
-  const [guidance, setGuidance] = useState("");
+function MissionModal({ mode, mission, onClose, onSave }: {
+  mode: MissionModalMode;
+  mission: Mission | null;
+  onClose: () => void;
+  onSave: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  const editing = mode === "edit";
   return (
-    <div className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="expand-title">
+    <div className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="mission-title">
       <button className="modal-backdrop" onClick={onClose} aria-label="Close" />
-      <form
-        className="modal"
-        onSubmit={(event) => { event.preventDefault(); onExpand(guidance.trim().slice(0, 600)); }}
-      >
-        <h2 id="expand-title">Expand list</h2>
-        <label>
-          Extra instructions
-          <textarea
-            value={guidance}
-            onChange={(event) => setGuidance(event.target.value)}
-            rows={3}
-            maxLength={600}
-          />
-        </label>
-        <div className="form-actions">
-          <button className="primary-button">Search</button>
-          <button type="button" className="link-button" onClick={onClose}>Cancel</button>
-        </div>
+      <form className="mission-modal" onSubmit={onSave}>
+        <button type="button" className="close-button" onClick={onClose} aria-label="Close modal">×</button>
+        <span className="step-label">{editing ? "EDIT MISSION" : "NEW MISSION · STEP 1 OF 1"}</span>
+        <h2 id="mission-title">{editing ? "Refine this mission without losing the rest." : "Turn your idea into a question the market can answer."}</h2>
+        <label>What do you want to validate?<textarea name="idea" required maxLength={600} defaultValue={mission?.title ?? ""} rows={3} /></label>
+        <label>Which profiles do you need to speak with?<input name="audience" required maxLength={400} defaultValue={mission?.audience ?? ""} /></label>
+        <label>What do you need to learn?<input name="question" required maxLength={400} defaultValue={mission?.question ?? ""} /></label>
+        {editing && <p className="mission-edit-note">Changing the focus clears this mission&apos;s current plan and contacts, then automatically builds a new strategic plan.</p>}
+        <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button">{editing ? "Save changes" : "Create mission"} <span>→</span></button></div>
       </form>
     </div>
   );
-}
-
-function groupBySegment(contacts: Contact[]): Array<[string, Contact[]]> {
-  const grouped = new Map<string, Contact[]>();
-  contacts.forEach((contact) => {
-    const segment = contact.sector || "Unsorted";
-    grouped.set(segment, [...(grouped.get(segment) ?? []), contact]);
-  });
-  return [...grouped.entries()];
-}
-
-function groupNotes(notes: PlanNote[]): Array<[string, PlanNote[]]> {
-  const grouped = new Map<string, PlanNote[]>();
-  notes.forEach((note) => {
-    const segment = note.segment || "Mission";
-    grouped.set(segment, [...(grouped.get(segment) ?? []), note]);
-  });
-  return [...grouped.entries()];
-}
-
-function statusLabel(status: ContactStatus): string {
-  return { new: "New", queued: "Queued", contacted: "Contacted", replied: "Replied", scheduled: "Booked", done: "Done", passed: "Passed" }[status];
-}
-
-function statusWeight(status: ContactStatus): number {
-  return { replied: 5, scheduled: 4, contacted: 3, new: 2, queued: 2, done: 1, passed: 0 }[status];
 }
 
 function AuthLoading() {
@@ -1115,8 +1035,6 @@ function AuthScreen({ initialMode, onRecoveryComplete }: {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
   const [error, setError] = useState(() =>
@@ -1132,8 +1050,6 @@ function AuthScreen({ initialMode, onRecoveryComplete }: {
     setMessage("");
     setPassword("");
     setConfirmPassword("");
-    setShowPassword(false);
-    setShowConfirmPassword(false);
   };
 
   const submitAuth = async (event: FormEvent<HTMLFormElement>) => {
@@ -1250,14 +1166,11 @@ function AuthScreen({ initialMode, onRecoveryComplete }: {
             {(mode === "signin" || mode === "signup" || mode === "reset") && (
               <label>
                 <span>{mode === "reset" ? "New password" : "Password"}{mode === "signin" && <button type="button" onClick={() => changeMode("forgot")}>Forgot password?</button>}</span>
-                <div className="password-input-wrap">
-                  <input type={showPassword ? "text" : "password"} required minLength={8} autoComplete={mode === "signin" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" />
-                  <button type="button" className="password-visibility" onClick={() => setShowPassword((visible) => !visible)} aria-label={showPassword ? "Hide password" : "Show password"} aria-pressed={showPassword}>{showPassword ? "Hide" : "Show"}</button>
-                </div>
+                <input type="password" required minLength={8} autoComplete={mode === "signin" ? "current-password" : "new-password"} value={password} onChange={(event) => setPassword(event.target.value)} placeholder="At least 8 characters" />
               </label>
             )}
             {(mode === "signup" || mode === "reset") && (
-              <label>Confirm password<div className="password-input-wrap"><input type={showConfirmPassword ? "text" : "password"} required minLength={8} autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Repeat your password" /><button type="button" className="password-visibility" onClick={() => setShowConfirmPassword((visible) => !visible)} aria-label={showConfirmPassword ? "Hide confirmation password" : "Show confirmation password"} aria-pressed={showConfirmPassword}>{showConfirmPassword ? "Hide" : "Show"}</button></div></label>
+              <label>Confirm password<input type="password" required minLength={8} autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} placeholder="Repeat your password" /></label>
             )}
 
             {error && <div className="auth-alert error" role="alert"><span>!</span>{error}</div>}
