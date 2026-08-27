@@ -4,7 +4,6 @@ import type { Session } from "@supabase/supabase-js";
 import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
 import { restorePersistedSession, supabase } from "@/lib/supabase";
 
-type View = "radar" | "contacts" | "messages" | "learnings";
 type AuthMode = "signin" | "signup" | "forgot" | "reset";
 type MissionModalMode = "new" | "edit";
 type Mission = {
@@ -56,7 +55,7 @@ type ActionPlan = {
 };
 
 type PlanResponse = {
-  stage: "plan";
+  stage: "plan" | "refine";
   plan: Omit<ActionPlan, "model">;
   model: string;
 };
@@ -90,7 +89,16 @@ type MissionResearch = {
   discovered: boolean;
   isPlanning: boolean;
   isDiscovering: boolean;
+  isRefining: boolean;
   contacted: number[];
+  strategyNotes: StrategyNote[];
+};
+
+type StrategyNote = {
+  id: string;
+  sector: string;
+  text: string;
+  createdAt: string;
 };
 
 type StoredMissionWorkspace = {
@@ -114,7 +122,9 @@ const emptyResearch = (): MissionResearch => ({
   discovered: false,
   isPlanning: false,
   isDiscovering: false,
+  isRefining: false,
   contacted: [],
+  strategyNotes: [],
 });
 
 function cleanMissionField(value: unknown, maxLength: number): string {
@@ -154,13 +164,6 @@ function readStoredMissionWorkspace(metadata: Record<string, unknown> | undefine
   return { version: 1, activeMissionId, missions: uniqueMissions };
 }
 
-const tabs: { id: View; label: string; icon: string }[] = [
-  { id: "radar", label: "Radar", icon: "◐" },
-  { id: "contacts", label: "Contacts", icon: "☷" },
-  { id: "messages", label: "Messages", icon: "✎" },
-  { id: "learnings", label: "Learnings", icon: "◇" },
-];
-
 export default function Home() {
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
@@ -170,7 +173,6 @@ export default function Home() {
   const [showAccount, setShowAccount] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
   const missionSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
-  const [view, setView] = useState<View>("radar");
   const [selected, setSelected] = useState<Contact | null>(null);
   const [missions, setMissions] = useState<Mission[]>([starterMission]);
   const [activeMissionId, setActiveMissionId] = useState(starterMission.id);
@@ -181,6 +183,10 @@ export default function Home() {
   const [filter, setFilter] = useState("All");
   const [query, setQuery] = useState("");
   const [missionModalMode, setMissionModalMode] = useState<MissionModalMode | null>(null);
+  const [noteSector, setNoteSector] = useState<string | null>(null);
+  const [expansionOpen, setExpansionOpen] = useState(false);
+  const [strategyOpen, setStrategyOpen] = useState(true);
+  const [candidateListOpen, setCandidateListOpen] = useState(true);
   const [toast, setToast] = useState("");
 
   useEffect(() => {
@@ -264,7 +270,7 @@ export default function Home() {
   );
   const activeResearch = missionResearch[mission.id] ?? emptyResearch();
   const contacts = activeResearch.contacts;
-  const { plan, error: aiError, discovered, isPlanning, isDiscovering, contacted } = activeResearch;
+  const { plan, error: aiError, discovered, isPlanning, isDiscovering, isRefining, contacted, strategyNotes } = activeResearch;
   const filteredContacts = useMemo(() => contacts.filter((contact) => {
     const matchesType = filter === "All" || contact.type === filter;
     const haystack = `${contact.name} ${contact.role} ${contact.company}`.toLowerCase();
@@ -307,15 +313,13 @@ export default function Home() {
   };
 
   const selectMission = (missionId: string) => {
-    if (missionId === mission.id) {
-      setView("radar");
-      return;
-    }
+    if (missionId === mission.id) return;
     setActiveMissionId(missionId);
-    setView("radar");
     setSelected(null);
     setFilter("All");
     setQuery("");
+    setStrategyOpen(true);
+    setCandidateListOpen(true);
     persistMissionWorkspace(missions, missionId);
     notify("Mission switched");
   };
@@ -360,11 +364,7 @@ export default function Home() {
     }
   };
 
-  const findContacts = async (refresh = false) => {
-    if (discovered && !refresh) {
-      setView("contacts");
-      return;
-    }
+  const findContacts = async (extraInstructions = "") => {
     if (!plan) {
       await buildPlan(mission);
       return;
@@ -372,57 +372,83 @@ export default function Home() {
 
     const researchMissionId = mission.id;
     const researchMission = mission;
+    setQuery("");
+    setFilter("All");
+    setCandidateListOpen(true);
     updateMissionResearch(researchMissionId, (current) => ({
       ...current,
       isDiscovering: true,
       error: "",
     }));
     try {
-      const response = await fetch("/api/ai/research", {
-        method: "POST",
-        headers: {
-          authorization: `Bearer ${session?.access_token ?? ""}`,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({ mission: researchMission, stage: "contacts", plan }),
-      });
-      const result = await response.json() as ContactResearchResponse | { error?: string };
-      if (!response.ok || !("profiles" in result)) {
-        throw new Error("error" in result && result.error ? result.error : "AI research could not be completed.");
-      }
+      const existingContacts = [...contacts];
+      const requestedTotal = existingContacts.length === 0 ? 50 : Math.min(200, existingContacts.length + 25);
+      const maxBatches = existingContacts.length === 0 ? 3 : 2;
+      const gathered: Contact[] = [];
+      const knownKeys = new Set(existingContacts.map((contact) => `${contact.name}|${contact.company}`.toLowerCase()));
 
-      const colors = ["coral", "mint", "blue", "yellow", "lilac", "pink"];
-      const researchedContacts: Contact[] = result.profiles.map((profile, index) => ({
-        id: 1000 + index,
-        initials: profile.initials,
-        name: profile.name,
-        role: profile.role,
-        company: profile.company,
-        sector: profile.sector,
-        reason: profile.reason,
-        angle: profile.angle,
-        fit: profile.fit,
-        type: profile.type,
-        color: colors[index % colors.length],
-        warm: profile.searchPath,
-        message: profile.message,
-        sourceUrl: profile.sourceUrl,
-        linkedinUrl: profile.linkedinUrl,
-        contactMethod: profile.contactMethod,
-        contactUrl: profile.contactUrl,
-        aiGenerated: true,
-      }));
+      for (let batch = 0; batch < maxBatches && existingContacts.length + gathered.length < requestedTotal; batch += 1) {
+        const response = await fetch("/api/ai/research", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${session?.access_token ?? ""}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            mission: researchMission,
+            stage: "contacts",
+            plan,
+            batchSize: Math.min(20, requestedTotal - existingContacts.length - gathered.length),
+            existingNames: [...existingContacts, ...gathered].map((contact) => `${contact.name} — ${contact.company}`),
+            extraInstructions,
+          }),
+        });
+        const result = await response.json() as ContactResearchResponse | { error?: string };
+        if (!response.ok || !("profiles" in result)) {
+          if (gathered.length > 0) break;
+          throw new Error("error" in result && result.error ? result.error : "AI research could not be completed.");
+        }
+
+        const colors = ["coral", "mint", "blue", "yellow", "lilac", "pink"];
+        const batchContacts: Contact[] = result.profiles.flatMap((profile, index) => {
+          const key = `${profile.name}|${profile.company}`.toLowerCase();
+          if (knownKeys.has(key)) return [];
+          knownKeys.add(key);
+          return [{
+            id: Date.now() + batch * 100 + index,
+            initials: profile.initials,
+            name: profile.name,
+            role: profile.role,
+            company: profile.company,
+            sector: profile.sector,
+            reason: profile.reason,
+            angle: profile.angle,
+            fit: profile.fit,
+            type: profile.type,
+            color: colors[(existingContacts.length + gathered.length + index) % colors.length],
+            warm: profile.searchPath,
+            message: profile.message,
+            sourceUrl: profile.sourceUrl,
+            linkedinUrl: profile.linkedinUrl,
+            contactMethod: profile.contactMethod,
+            contactUrl: profile.contactUrl,
+            aiGenerated: true,
+          }];
+        });
+        gathered.push(...batchContacts);
+        if (batchContacts.length === 0) break;
+      }
 
       updateMissionResearch(researchMissionId, (current) => ({
         ...current,
-        contacts: researchedContacts,
+        contacts: [...current.contacts, ...gathered].slice(0, 200),
         error: "",
-        discovered: true,
+        discovered: current.contacts.length + gathered.length > 0,
         isDiscovering: false,
-        contacted: [],
       }));
       setSelected(null);
-      notify(`${researchedContacts.length} verified profiles found`);
+      setCandidateListOpen(true);
+      notify(gathered.length ? `${gathered.length} new verified profiles added` : "No new verified profiles found");
     } catch (researchError) {
       const message = researchError instanceof Error ? researchError.message : "AI research could not be completed.";
       updateMissionResearch(researchMissionId, (current) => ({
@@ -431,6 +457,45 @@ export default function Home() {
         isDiscovering: false,
       }));
       notify("AI research needs your attention");
+    }
+  };
+
+  const addStrategyNote = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!noteSector || !plan) return;
+    const data = new FormData(event.currentTarget);
+    const text = cleanMissionField(data.get("note"), 700);
+    if (!text) return;
+    const nextNotes = [...strategyNotes, { id: crypto.randomUUID(), sector: noteSector, text, createdAt: new Date().toISOString() }];
+    updateMissionResearch(mission.id, (current) => ({ ...current, strategyNotes: nextNotes, isRefining: true, error: "" }));
+    setNoteSector(null);
+    notify("Learning saved · updating the strategy");
+
+    try {
+      const response = await fetch("/api/ai/research", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session?.access_token ?? ""}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          mission,
+          stage: "refine",
+          plan,
+          strategyNotes: nextNotes,
+          contactedProfiles: contacts.filter((contact) => contacted.includes(contact.id)).map((contact) => ({ name: contact.name, role: contact.role, company: contact.company, sector: contact.sector })),
+        }),
+      });
+      const result = await response.json() as PlanResponse | { error?: string };
+      if (!response.ok || !("plan" in result)) {
+        throw new Error("error" in result && result.error ? result.error : "The strategy could not be updated.");
+      }
+      updateMissionResearch(mission.id, (current) => ({ ...current, plan: { ...result.plan, model: result.model }, isRefining: false, error: "" }));
+      notify("Strategy updated from your latest learning");
+    } catch (refineError) {
+      const message = refineError instanceof Error ? refineError.message : "The strategy could not be updated.";
+      updateMissionResearch(mission.id, (current) => ({ ...current, isRefining: false, error: message }));
+      notify("The learning was saved, but the strategy was not updated");
     }
   };
 
@@ -478,7 +543,6 @@ export default function Home() {
     }
 
     setMissionModalMode(null);
-    setView("radar");
     setSelected(null);
     setFilter("All");
     setQuery("");
@@ -501,24 +565,6 @@ export default function Home() {
     setShowAccount(false);
   };
 
-  useEffect(() => {
-    if (!showAccount) return;
-    const handlePointerDown = (event: MouseEvent | TouchEvent) => {
-      if (!accountMenuRef.current?.contains(event.target as Node)) setShowAccount(false);
-    };
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setShowAccount(false);
-    };
-    document.addEventListener("mousedown", handlePointerDown);
-    document.addEventListener("touchstart", handlePointerDown);
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      document.removeEventListener("mousedown", handlePointerDown);
-      document.removeEventListener("touchstart", handlePointerDown);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [showAccount]);
-
   if (authLoading) return <AuthLoading />;
 
   if (!session || recoveryMode) {
@@ -536,10 +582,10 @@ export default function Home() {
   return (
     <main className="app-shell">
       <aside className="sidebar">
-        <button className="brand" onClick={() => setView("radar")} aria-label="Go to radar">
+        <div className="brand" aria-label="100 Calls">
           <span className="brand-mark">100</span>
           <span>CALLS</span>
-        </button>
+        </div>
         <button className="new-mission" onClick={() => setMissionModalMode("new")}><span>+</span> New mission</button>
         <section className="mission-library" aria-label="Saved missions">
           <button
@@ -566,30 +612,18 @@ export default function Home() {
             </div>
           )}
         </section>
-        <nav className="side-nav" aria-label="Main navigation">
-          {tabs.map((tab) => (
-            <button className={`nav-item ${view === tab.id ? "active" : ""}`} key={tab.id} onClick={() => setView(tab.id)}>
-              <span>{tab.icon}</span>{tab.label}
-              {tab.id === "contacts" && <b>{contacts.length}</b>}
-              {tab.id === "messages" && <b>{contacted.length}</b>}
-            </button>
-          ))}
-        </nav>
         <div className="sidebar-bottom">
-          <div className="goal-label"><p>Your goal</p><strong>{12 + contacted.length} / 100</strong></div>
-          <div className="progress-track"><span style={{ width: `${12 + contacted.length}%` }} /></div>
-          <small>Conversations activated</small>
+          <div className="goal-label"><p>Mission progress</p><strong>{contacted.length} / 100</strong></div>
+          <div className="progress-track"><span style={{ width: `${contacted.length}%` }} /></div>
+          <small>{contacts.length} candidates · {strategyNotes.length} learnings</small>
         </div>
       </aside>
 
       <div className="mobile-header">
-        <button className="brand" onClick={() => setView("radar")}><span className="brand-mark">100</span><span>CALLS</span></button>
+        <div className="brand"><span className="brand-mark">100</span><span>CALLS</span></div>
         <div className="mobile-header-controls">
           <select aria-label="Select mission" value={mission.id} onChange={(event) => selectMission(event.target.value)}>
             {missions.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
-          </select>
-          <select aria-label="Change section" value={view} onChange={(event) => setView(event.target.value as View)}>
-            {tabs.map((tab) => <option key={tab.id} value={tab.id}>{tab.label}</option>)}
           </select>
         </div>
       </div>
@@ -608,44 +642,33 @@ export default function Home() {
             </div>
           )}
         </div>
-        {view === "radar" && (
-          <Radar
-            contacts={contacts.slice(0, 3)}
-            mission={mission}
-            isPlanning={isPlanning}
-            isDiscovering={isDiscovering}
-            discovered={discovered}
-            plan={plan}
-            aiError={aiError}
-            onBuildPlan={() => buildPlan(mission)}
-            onFind={() => findContacts(false)}
-            onSelect={setSelected}
-            onViewAll={() => setView("contacts")}
-            onEditMission={() => setMissionModalMode("edit")}
-          />
-        )}
-
-        {view === "contacts" && (
-          <ContactsView
-            contacts={filteredContacts}
-            total={contacts.length}
-            query={query}
-            filter={filter}
-            contacted={contacted}
-            hasPlan={Boolean(plan)}
-            isDiscovering={isDiscovering}
-            onQuery={setQuery}
-            onFilter={setFilter}
-            onSelect={setSelected}
-            onFind={() => findContacts(true)}
-          />
-        )}
-
-        {view === "messages" && (
-          <MessagesView contacts={contacts} contacted={contacted} onSelect={setSelected} onCopy={copyMessage} />
-        )}
-
-        {view === "learnings" && <LearningsView />}
+        <MissionWorkspace
+          mission={mission}
+          plan={plan}
+          contacts={filteredContacts}
+          totalContacts={contacts.length}
+          contacted={contacted}
+          strategyNotes={strategyNotes}
+          aiError={aiError}
+          isPlanning={isPlanning}
+          isDiscovering={isDiscovering}
+          isRefining={isRefining}
+          discovered={discovered}
+          strategyOpen={strategyOpen}
+          candidateListOpen={candidateListOpen}
+          query={query}
+          filter={filter}
+          onBuildPlan={() => buildPlan(mission)}
+          onEditMission={() => setMissionModalMode("edit")}
+          onToggleStrategy={() => setStrategyOpen((open) => !open)}
+          onToggleCandidates={() => setCandidateListOpen((open) => !open)}
+          onAddNote={setNoteSector}
+          onFind={() => findContacts("")}
+          onExpand={() => setExpansionOpen(true)}
+          onQuery={setQuery}
+          onFilter={setFilter}
+          onSelect={setSelected}
+        />
       </section>
 
       {selected && (
@@ -666,6 +689,23 @@ export default function Home() {
           onSave={saveMission}
         />
       )}
+      {noteSector && (
+        <StrategyNoteModal
+          sector={noteSector}
+          onClose={() => setNoteSector(null)}
+          onSave={addStrategyNote}
+        />
+      )}
+      {expansionOpen && (
+        <ExpansionModal
+          currentCount={contacts.length}
+          onClose={() => setExpansionOpen(false)}
+          onExpand={(instructions) => {
+            setExpansionOpen(false);
+            void findContacts(instructions);
+          }}
+        />
+      )}
       {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}
     </main>
   );
@@ -677,7 +717,300 @@ function groupContactsBySector(contacts: Contact[]): Array<[string, Contact[]]> 
   return [...grouped.entries()];
 }
 
-function Radar({ contacts, mission, isPlanning, isDiscovering, discovered, plan, aiError, onBuildPlan, onFind, onSelect, onViewAll, onEditMission }: {
+function MissionWorkspace({
+  mission,
+  plan,
+  contacts,
+  totalContacts,
+  contacted,
+  strategyNotes,
+  aiError,
+  isPlanning,
+  isDiscovering,
+  isRefining,
+  discovered,
+  strategyOpen,
+  candidateListOpen,
+  query,
+  filter,
+  onBuildPlan,
+  onEditMission,
+  onToggleStrategy,
+  onToggleCandidates,
+  onAddNote,
+  onFind,
+  onExpand,
+  onQuery,
+  onFilter,
+  onSelect,
+}: {
+  mission: Mission;
+  plan: ActionPlan | null;
+  contacts: Contact[];
+  totalContacts: number;
+  contacted: number[];
+  strategyNotes: StrategyNote[];
+  aiError: string;
+  isPlanning: boolean;
+  isDiscovering: boolean;
+  isRefining: boolean;
+  discovered: boolean;
+  strategyOpen: boolean;
+  candidateListOpen: boolean;
+  query: string;
+  filter: string;
+  onBuildPlan: () => void;
+  onEditMission: () => void;
+  onToggleStrategy: () => void;
+  onToggleCandidates: () => void;
+  onAddNote: (sector: string) => void;
+  onFind: () => void;
+  onExpand: () => void;
+  onQuery: (value: string) => void;
+  onFilter: (value: string) => void;
+  onSelect: (contact: Contact) => void;
+}) {
+  return (
+    <div className="mission-flow">
+      <section className="objective-panel">
+        <div className="flow-number">01</div>
+        <div className="objective-copy">
+          <span className="eyebrow">OBJECTIVE</span>
+          <h1>{mission.title}</h1>
+          <p><strong>People:</strong> {mission.audience}</p>
+          <p><strong>What to learn:</strong> {mission.question}</p>
+        </div>
+        <button className="edit-objective" onClick={onEditMission}><span>✎</span>Edit objective</button>
+      </section>
+
+      {aiError && <div className="workspace-error" role="alert"><span>!</span><p>{aiError}</p></div>}
+
+      {isPlanning && (
+        <section className="flow-loading" aria-live="polite">
+          <i className="spinner dark" />
+          <div><strong>Building the contact strategy</strong><p>Mapping sectors, roles, learning value and interview order.</p></div>
+        </section>
+      )}
+
+      {!plan && !isPlanning && (
+        <section className="flow-empty">
+          <div className="flow-number">02</div>
+          <div><span className="eyebrow">CONTACT STRATEGY</span><h2>Start with a clear map, not a random list.</h2><p>GPT will justify which sectors to approach, what each group can teach you, and the order in which to contact them.</p></div>
+          <button className="primary-button" onClick={onBuildPlan}>Create strategy <span>→</span></button>
+        </section>
+      )}
+
+      {plan && (
+        <LivingStrategy
+          plan={plan}
+          notes={strategyNotes}
+          isOpen={strategyOpen}
+          isRefining={isRefining}
+          onToggle={onToggleStrategy}
+          onAddNote={onAddNote}
+        />
+      )}
+
+      {plan && (
+        <CandidatePool
+          contacts={contacts}
+          total={totalContacts}
+          contacted={contacted}
+          isOpen={candidateListOpen}
+          isDiscovering={isDiscovering}
+          discovered={discovered}
+          query={query}
+          filter={filter}
+          onToggle={onToggleCandidates}
+          onFind={onFind}
+          onExpand={onExpand}
+          onQuery={onQuery}
+          onFilter={onFilter}
+          onSelect={onSelect}
+        />
+      )}
+    </div>
+  );
+}
+
+function LivingStrategy({ plan, notes, isOpen, isRefining, onToggle, onAddNote }: {
+  plan: ActionPlan;
+  notes: StrategyNote[];
+  isOpen: boolean;
+  isRefining: boolean;
+  onToggle: () => void;
+  onAddNote: (sector: string) => void;
+}) {
+  return (
+    <section className="flow-section strategy-section">
+      <button className="flow-section-header" onClick={onToggle} aria-expanded={isOpen}>
+        <span className="flow-number">02</span>
+        <span className="flow-heading-copy"><span className="eyebrow">LIVING CONTACT STRATEGY</span><strong>{plan.segments.length} routes to evidence</strong><small>{notes.length ? `${notes.length} field learning${notes.length === 1 ? "" : "s"} shaping this plan` : "Add learnings as conversations happen; the plan will adapt."}</small></span>
+        {isRefining && <span className="updating-label"><i className="spinner dark" /> Updating</span>}
+        <span className="collapse-label">{isOpen ? "Collapse" : "Open"} <b>{isOpen ? "−" : "+"}</b></span>
+      </button>
+
+      {isOpen && (
+        <div className="strategy-body">
+          <div className="strategy-thesis">
+            <div><span>Objective</span><p>{plan.objective}</p></div>
+            <div><span>Riskiest assumption</span><p>{plan.hypothesis}</p></div>
+            <strong>{plan.recommendedInterviews}<small>recommended conversations</small></strong>
+          </div>
+
+          <div className="strategy-map">
+            {plan.segments.map((segment, index) => {
+              const sectorNotes = notes.filter((note) => note.sector === segment.sector);
+              return (
+                <article className="strategy-route" key={segment.sector}>
+                  <div className="route-index">{String(index + 1).padStart(2, "0")}</div>
+                  <div className="route-main">
+                    <div className="route-title"><div><span className={`priority priority-${segment.priority.toLowerCase()}`}>{segment.priority}</span><h3>{segment.sector}</h3></div><strong>{segment.targetCount} calls</strong></div>
+                    <div className="role-chips">{segment.roles.map((role) => <span key={role}>{role}</span>)}</div>
+                    <div className="route-rationale"><div><span>Why this sector</span><p>{segment.why}</p></div><div><span>What it unlocks</span><p>{segment.learningGoal}</p></div><div><span>How to reach it</span><p>{segment.searchApproach}</p></div></div>
+                    {sectorNotes.length > 0 && (
+                      <div className="field-notes"><span>FIELD LEARNINGS</span>{sectorNotes.map((note) => <p key={note.id}><i />{note.text}</p>)}</div>
+                    )}
+                    <button className="add-learning" onClick={() => onAddNote(segment.sector)}>+ Add learning from a conversation</button>
+                  </div>
+                </article>
+              );
+            })}
+          </div>
+
+          <details className="strategy-details">
+            <summary>Open execution guide and interview questions <span>+</span></summary>
+            <div className="strategy-details-grid">
+              <div><span className="eyebrow">SEQUENCE</span><ol>{plan.sequence.map((step, index) => <li key={`${step.title}-${index}`}><b>{String(index + 1).padStart(2, "0")}</b><div><strong>{step.title}</strong><p>{step.detail}</p><small>{step.outcome}</small></div></li>)}</ol></div>
+              <div><span className="eyebrow">INTERVIEW GUIDE</span><ol className="compact-questions">{plan.questions.map((question, index) => <li key={`${question}-${index}`}><b>{String(index + 1).padStart(2, "0")}</b><p>{question}</p></li>)}</ol></div>
+            </div>
+            <div className="decision-strip"><span>Decision criteria</span>{plan.successCriteria.map((criterion) => <p key={criterion}>✓ {criterion}</p>)}</div>
+          </details>
+        </div>
+      )}
+    </section>
+  );
+}
+
+function CandidatePool({ contacts, total, contacted, isOpen, isDiscovering, discovered, query, filter, onToggle, onFind, onExpand, onQuery, onFilter, onSelect }: {
+  contacts: Contact[];
+  total: number;
+  contacted: number[];
+  isOpen: boolean;
+  isDiscovering: boolean;
+  discovered: boolean;
+  query: string;
+  filter: string;
+  onToggle: () => void;
+  onFind: () => void;
+  onExpand: () => void;
+  onQuery: (value: string) => void;
+  onFilter: (value: string) => void;
+  onSelect: (contact: Contact) => void;
+}) {
+  const filters = ["All", "Potential customer", "Founder", "Expert"];
+  const groupedContacts = groupContactsBySector(contacts);
+  return (
+    <section className="flow-section candidate-section">
+      <button className="flow-section-header" onClick={onToggle} aria-expanded={isOpen}>
+        <span className="flow-number">03</span>
+        <span className="flow-heading-copy"><span className="eyebrow">CANDIDATE POOL</span><strong>{total ? `${total} verified people` : "50–200 relevant people"}</strong><small>Grouped by sector, with LinkedIn and public contact routes when available.</small></span>
+        <span className="candidate-progress"><b>{total}</b><i><span style={{ width: `${Math.min(100, (total / 200) * 100)}%` }} /></i><small>max 200</small></span>
+        <span className="collapse-label">{isOpen ? "Collapse" : "Open"} <b>{isOpen ? "−" : "+"}</b></span>
+      </button>
+
+      {isOpen && (
+        <div className="candidate-body">
+          {total === 0 ? (
+            <div className="candidate-empty">
+              <div><strong>No placeholder profiles.</strong><p>Build the first pool from public professional sources. GPT will work in verified batches toward 50 candidates.</p></div>
+              <button className="primary-button" onClick={onFind} disabled={isDiscovering}>{isDiscovering ? <><i className="spinner" /> Building the pool</> : <>Build first 50 candidates <span>→</span></>}</button>
+            </div>
+          ) : (
+            <>
+              <div className="candidate-toolbar">
+                <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search name, role or company" /></label>
+                <div className="filter-row">{filters.map((item) => <button key={item} className={filter === item ? "selected" : ""} onClick={() => onFilter(item)}>{item}</button>)}</div>
+              </div>
+
+              {groupedContacts.length ? groupedContacts.map(([sector, sectorContacts]) => (
+                <section className="candidate-sector" key={sector}>
+                  <header><h3>{sector}</h3><span>{sectorContacts.length}</span></header>
+                  <div className="candidate-list">
+                    {sectorContacts.map((contact) => (
+                      <button className="candidate-row" key={contact.id} onClick={() => onSelect(contact)}>
+                        <span className={`contact-avatar small ${contact.color}`}>{contact.initials}</span>
+                        <span className="candidate-person"><strong>{contact.name}</strong><small>{contact.role} · {contact.company}</small></span>
+                        <span className="candidate-value">{contact.reason}</span>
+                        <span className="candidate-links">{contact.linkedinUrl && <i>in</i>}{contact.contactUrl && <b>Contact</b>}</span>
+                        <span className={`status ${contacted.includes(contact.id) ? "done" : ""}`}><i />{contacted.includes(contact.id) ? "Contacted" : "Pending"}</span>
+                        <span className="row-arrow">→</span>
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )) : <div className="empty-state"><strong>No matches found</strong><p>Try a broader search or another contact type.</p></div>}
+
+              <footer className="expand-pool">
+                <div><span className="eyebrow">KEEP DISCOVERING</span><strong>{total < 50 ? `${50 - total} more profiles to reach the initial pool` : `${200 - total} spaces remain in this mission`}</strong><p>Every expansion keeps the existing list and avoids duplicate people.</p></div>
+                {total < 200 && <button className="primary-button" onClick={onExpand} disabled={isDiscovering}>{isDiscovering ? <><i className="spinner" /> Researching more</> : <>Expand list <span>+</span></>}</button>}
+              </footer>
+            </>
+          )}
+          {isDiscovering && total > 0 && <div className="research-progress" role="status"><i className="spinner dark" /><span>Searching and verifying another batch. Existing candidates stay in place.</span></div>}
+          {discovered && <p className="source-note">Profiles are based on public professional sources. Verify the current role before outreach.</p>}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function StrategyNoteModal({ sector, onClose, onSave }: {
+  sector: string;
+  onClose: () => void;
+  onSave: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <div className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="note-title">
+      <button className="modal-backdrop" onClick={onClose} aria-label="Close" />
+      <form className="mission-modal small-modal" onSubmit={onSave}>
+        <button type="button" className="close-button" onClick={onClose} aria-label="Close modal">×</button>
+        <span className="step-label">FIELD LEARNING · {sector.toUpperCase()}</span>
+        <h2 id="note-title">What changed after this conversation?</h2>
+        <p className="modal-intro">Add one concrete signal, contradiction or new question. It will remain beside this sector and update the strategy.</p>
+        <label>Learning<textarea name="note" required maxLength={700} rows={5} placeholder="Example: operators care more about recovery time than coordination accuracy…" /></label>
+        <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button">Save & update strategy <span>→</span></button></div>
+      </form>
+    </div>
+  );
+}
+
+function ExpansionModal({ currentCount, onClose, onExpand }: {
+  currentCount: number;
+  onClose: () => void;
+  onExpand: (instructions: string) => void;
+}) {
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    onExpand(cleanMissionField(data.get("instructions"), 700));
+  };
+  return (
+    <div className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="expand-title">
+      <button className="modal-backdrop" onClick={onClose} aria-label="Close" />
+      <form className="mission-modal small-modal" onSubmit={submit}>
+        <button type="button" className="close-button" onClick={onClose} aria-label="Close modal">×</button>
+        <span className="step-label">EXPAND CANDIDATE POOL · {currentCount}/200</span>
+        <h2 id="expand-title">Any extra direction for this expansion?</h2>
+        <p className="modal-intro">Optional. Narrow the geography, add a sector, prioritize seniority, or leave it blank to follow the current strategy.</p>
+        <label>Extra instruction<textarea name="instructions" maxLength={700} rows={4} placeholder="Example: add European robotics researchers and industrial fleet operators…" /></label>
+        <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button">Find more people <span>→</span></button></div>
+      </form>
+    </div>
+  );
+}
+
+export function Radar({ contacts, mission, isPlanning, isDiscovering, discovered, plan, aiError, onBuildPlan, onFind, onSelect, onViewAll, onEditMission }: {
   contacts: Contact[];
   mission: Mission;
   isPlanning: boolean;
@@ -817,7 +1150,7 @@ function ActionPlanSection({ plan, isDiscovering, discovered, onFind }: {
   );
 }
 
-function ContactsView({ contacts, total, query, filter, contacted, hasPlan, isDiscovering, onQuery, onFilter, onSelect, onFind }: {
+export function ContactsView({ contacts, total, query, filter, contacted, hasPlan, isDiscovering, onQuery, onFilter, onSelect, onFind }: {
   contacts: Contact[];
   total: number;
   query: string;
@@ -871,7 +1204,7 @@ function ContactsView({ contacts, total, query, filter, contacted, hasPlan, isDi
   );
 }
 
-function MessagesView({ contacts, contacted, onSelect, onCopy }: {
+export function MessagesView({ contacts, contacted, onSelect, onCopy }: {
   contacts: Contact[];
   contacted: number[];
   onSelect: (contact: Contact) => void;
@@ -914,7 +1247,7 @@ function MessagesView({ contacts, contacted, onSelect, onCopy }: {
   );
 }
 
-function LearningsView() {
+export function LearningsView() {
   return (
     <>
       <PageHeader eyebrow="DON'T COLLECT NOTES, FIND SIGNALS" title="What you are learning" subtitle="A working synthesis of 12 conversations." />
