@@ -6,6 +6,13 @@ import { restorePersistedSession, supabase } from "@/lib/supabase";
 
 type View = "radar" | "contacts" | "messages" | "learnings";
 type AuthMode = "signin" | "signup" | "forgot" | "reset";
+type MissionModalMode = "new" | "edit";
+type Mission = {
+  id: string;
+  title: string;
+  audience: string;
+  question: string;
+};
 type Contact = {
   id: number;
   initials: string;
@@ -44,6 +51,75 @@ type ResearchResponse = ResearchStrategy & {
     sourceUrl: string;
   }>;
 };
+
+type MissionResearch = {
+  contacts: Contact[];
+  strategy: ResearchStrategy | null;
+  error: string;
+  discovered: boolean;
+  isDiscovering: boolean;
+  contacted: number[];
+};
+
+type StoredMissionWorkspace = {
+  version: 1;
+  activeMissionId: string;
+  missions: Mission[];
+};
+
+const MISSION_METADATA_KEY = "one_hundred_calls_workspace";
+const starterMission: Mission = {
+  id: "late-payments-smbs",
+  title: "Validate a tool that reduces late payments for SMBs",
+  audience: "finance leaders, B2B founders, and collections experts",
+  question: "the problem, urgency, and willingness to pay",
+};
+
+const emptyResearch = (): MissionResearch => ({
+  contacts: [],
+  strategy: null,
+  error: "",
+  discovered: false,
+  isDiscovering: false,
+  contacted: [],
+});
+
+function cleanMissionField(value: unknown, maxLength: number): string {
+  return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function readStoredMission(value: unknown): Mission | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  const mission = {
+    id: cleanMissionField(candidate.id, 100),
+    title: cleanMissionField(candidate.title, 600),
+    audience: cleanMissionField(candidate.audience, 400),
+    question: cleanMissionField(candidate.question, 400),
+  };
+  return Object.values(mission).every(Boolean) ? mission : null;
+}
+
+function readStoredMissionWorkspace(metadata: Record<string, unknown> | undefined): StoredMissionWorkspace | null {
+  const stored = metadata?.[MISSION_METADATA_KEY];
+  if (!stored || typeof stored !== "object") return null;
+  const candidate = stored as Record<string, unknown>;
+  if (candidate.version !== 1 || !Array.isArray(candidate.missions)) return null;
+
+  const missions = candidate.missions.flatMap((mission) => {
+    const parsed = readStoredMission(mission);
+    return parsed ? [parsed] : [];
+  });
+  const uniqueMissions = missions.filter((mission, index) => missions.findIndex((item) => item.id === mission.id) === index);
+  if (uniqueMissions.length === 0) return null;
+
+  const requestedActiveId = cleanMissionField(candidate.activeMissionId, 100);
+  const activeMissionId = uniqueMissions.some((mission) => mission.id === requestedActiveId)
+    ? requestedActiveId
+    : uniqueMissions[0].id;
+
+  return { version: 1, activeMissionId, missions: uniqueMissions };
+}
 
 const primaryContacts: Contact[] = [
   {
@@ -102,31 +178,55 @@ export default function Home() {
   );
   const [showAccount, setShowAccount] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
+  const missionSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const [view, setView] = useState<View>("radar");
   const [selected, setSelected] = useState<Contact | null>(null);
-  const [aiContacts, setAiContacts] = useState<Contact[]>([]);
-  const [strategy, setStrategy] = useState<ResearchStrategy | null>(null);
-  const [aiError, setAiError] = useState("");
-  const [discovered, setDiscovered] = useState(false);
-  const [isDiscovering, setIsDiscovering] = useState(false);
-  const [contacted, setContacted] = useState<number[]>([2]);
+  const [missions, setMissions] = useState<Mission[]>([starterMission]);
+  const [activeMissionId, setActiveMissionId] = useState(starterMission.id);
+  const [missionResearch, setMissionResearch] = useState<Record<string, MissionResearch>>({
+    [starterMission.id]: { ...emptyResearch(), contacted: [2] },
+  });
+  const [missionListOpen, setMissionListOpen] = useState(true);
   const [filter, setFilter] = useState("All");
   const [query, setQuery] = useState("");
-  const [showMission, setShowMission] = useState(false);
+  const [missionModalMode, setMissionModalMode] = useState<MissionModalMode | null>(null);
   const [toast, setToast] = useState("");
-  const [mission, setMission] = useState({
-    title: "Validate a tool that reduces late payments for SMBs",
-    audience: "finance leaders, B2B founders, and collections experts",
-    question: "the problem, urgency, and willingness to pay",
-  });
 
   useEffect(() => {
     let active = true;
 
+    const applySession = (nextSession: Session | null) => {
+      if (!active) return;
+      setSession(nextSession);
+      if (!nextSession) return;
+
+      const storedWorkspace = readStoredMissionWorkspace(nextSession.user.user_metadata as Record<string, unknown> | undefined);
+      const nextMissions = storedWorkspace?.missions ?? [starterMission];
+      const nextActiveMissionId = storedWorkspace?.activeMissionId ?? starterMission.id;
+
+      setMissions(nextMissions);
+      setActiveMissionId(nextActiveMissionId);
+      setMissionResearch((current) => {
+        const nextResearch: Record<string, MissionResearch> = {};
+        nextMissions.forEach((mission) => {
+          nextResearch[mission.id] = current[mission.id]
+            ?? (mission.id === starterMission.id ? { ...emptyResearch(), contacted: [2] } : emptyResearch());
+        });
+        return nextResearch;
+      });
+      setSelected(null);
+      setFilter("All");
+      setQuery("");
+    };
+
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!active) return;
       if (event === "INITIAL_SESSION") return;
-      setSession(nextSession);
+      if (event === "SIGNED_IN" || event === "PASSWORD_RECOVERY" || event === "SIGNED_OUT") {
+        applySession(nextSession);
+      } else {
+        setSession(nextSession);
+      }
       setAuthLoading(false);
       if (event === "PASSWORD_RECOVERY") setRecoveryMode(true);
       if (event === "SIGNED_OUT") setShowAccount(false);
@@ -134,10 +234,10 @@ export default function Home() {
 
     restorePersistedSession()
       .then((persistedSession) => {
-        if (active) setSession(persistedSession);
+        applySession(persistedSession);
       })
       .catch(() => {
-        if (active) setSession(null);
+        applySession(null);
       })
       .finally(() => {
         if (active) setAuthLoading(false);
@@ -167,7 +267,16 @@ export default function Home() {
     };
   }, [showAccount]);
 
-  const contacts = useMemo(() => aiContacts.length ? aiContacts : primaryContacts, [aiContacts]);
+  const mission = useMemo(
+    () => missions.find((item) => item.id === activeMissionId) ?? missions[0] ?? starterMission,
+    [activeMissionId, missions],
+  );
+  const activeResearch = missionResearch[mission.id] ?? emptyResearch();
+  const contacts = useMemo(
+    () => activeResearch.contacts.length ? activeResearch.contacts : primaryContacts,
+    [activeResearch.contacts],
+  );
+  const { strategy, error: aiError, discovered, isDiscovering, contacted } = activeResearch;
   const filteredContacts = useMemo(() => contacts.filter((contact) => {
     const matchesType = filter === "All" || contact.type === filter;
     const haystack = `${contact.name} ${contact.role} ${contact.company}`.toLowerCase();
@@ -179,14 +288,63 @@ export default function Home() {
     window.setTimeout(() => setToast(""), 2600);
   };
 
+  const updateMissionResearch = (
+    missionId: string,
+    update: (current: MissionResearch) => MissionResearch,
+  ) => {
+    setMissionResearch((current) => ({
+      ...current,
+      [missionId]: update(current[missionId] ?? emptyResearch()),
+    }));
+  };
+
+  const persistMissionWorkspace = (nextMissions: Mission[], nextActiveMissionId: string) => {
+    const workspace: StoredMissionWorkspace = {
+      version: 1,
+      missions: nextMissions,
+      activeMissionId: nextActiveMissionId,
+    };
+
+    missionSaveQueueRef.current = missionSaveQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const { error } = await supabase.auth.updateUser({
+          data: { [MISSION_METADATA_KEY]: workspace },
+        });
+        if (error) throw error;
+      })
+      .catch(() => {
+        notify("Mission changed, but it could not be saved to your account");
+      });
+  };
+
+  const selectMission = (missionId: string) => {
+    if (missionId === mission.id) {
+      setView("radar");
+      return;
+    }
+    setActiveMissionId(missionId);
+    setView("radar");
+    setSelected(null);
+    setFilter("All");
+    setQuery("");
+    persistMissionWorkspace(missions, missionId);
+    notify("Mission switched");
+  };
+
   const findContacts = async (refresh = false) => {
     if (discovered && !refresh) {
       setView("contacts");
       return;
     }
 
-    setIsDiscovering(true);
-    setAiError("");
+    const researchMissionId = mission.id;
+    const researchMission = mission;
+    updateMissionResearch(researchMissionId, (current) => ({
+      ...current,
+      isDiscovering: true,
+      error: "",
+    }));
     try {
       const response = await fetch("/api/ai/research", {
         method: "POST",
@@ -194,7 +352,7 @@ export default function Home() {
           authorization: `Bearer ${session?.access_token ?? ""}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ mission }),
+        body: JSON.stringify({ mission: researchMission }),
       });
       const result = await response.json() as ResearchResponse | { error?: string };
       if (!response.ok || !("profiles" in result)) {
@@ -219,23 +377,34 @@ export default function Home() {
         aiGenerated: true,
       }));
 
-      setAiContacts(researchedContacts);
-      setStrategy({ summary: result.summary, questions: result.questions, model: result.model });
-      setDiscovered(true);
+      updateMissionResearch(researchMissionId, () => ({
+        contacts: researchedContacts,
+        strategy: { summary: result.summary, questions: result.questions, model: result.model },
+        error: "",
+        discovered: true,
+        isDiscovering: false,
+        contacted: [],
+      }));
       setSelected(null);
-      setContacted([]);
       notify(`${researchedContacts.length} verified profiles found`);
     } catch (researchError) {
       const message = researchError instanceof Error ? researchError.message : "AI research could not be completed.";
-      setAiError(message);
+      updateMissionResearch(researchMissionId, (current) => ({
+        ...current,
+        error: message,
+        isDiscovering: false,
+      }));
       notify("AI research needs your attention");
-    } finally {
-      setIsDiscovering(false);
     }
   };
 
   const markContacted = (id: number) => {
-    if (!contacted.includes(id)) setContacted((current) => [...current, id]);
+    if (!contacted.includes(id)) {
+      updateMissionResearch(mission.id, (current) => ({
+        ...current,
+        contacted: [...current.contacted, id],
+      }));
+    }
     setSelected(null);
     notify("Contact moved to follow-up");
   };
@@ -243,17 +412,38 @@ export default function Home() {
   const saveMission = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const data = new FormData(event.currentTarget);
-    setMission({
-      title: String(data.get("idea")),
-      audience: String(data.get("audience")),
-      question: String(data.get("question")),
-    });
-    setShowMission(false);
-    setDiscovered(false);
-    setAiContacts([]);
-    setStrategy(null);
-    setAiError("");
-    notify("New mission ready");
+    const fields = {
+      title: cleanMissionField(data.get("idea"), 600),
+      audience: cleanMissionField(data.get("audience"), 400),
+      question: cleanMissionField(data.get("question"), 400),
+    };
+    if (!fields.title || !fields.audience || !fields.question || !missionModalMode) return;
+
+    if (missionModalMode === "edit") {
+      const updatedMission = { ...mission, ...fields };
+      const nextMissions = missions.map((item) => item.id === mission.id ? updatedMission : item);
+      setMissions(nextMissions);
+      updateMissionResearch(mission.id, () => emptyResearch());
+      persistMissionWorkspace(nextMissions, mission.id);
+      notify("Mission updated");
+    } else {
+      const newMission: Mission = {
+        id: crypto.randomUUID(),
+        ...fields,
+      };
+      const nextMissions = [newMission, ...missions];
+      setMissions(nextMissions);
+      setActiveMissionId(newMission.id);
+      setMissionResearch((current) => ({ ...current, [newMission.id]: emptyResearch() }));
+      persistMissionWorkspace(nextMissions, newMission.id);
+      notify("New mission saved");
+    }
+
+    setMissionModalMode(null);
+    setView("radar");
+    setSelected(null);
+    setFilter("All");
+    setQuery("");
   };
 
   const copyMessage = async (contact: Contact) => {
@@ -321,7 +511,32 @@ export default function Home() {
             </button>
           ))}
         </nav>
-        <button className="new-mission" onClick={() => setShowMission(true)}><span>+</span> New mission</button>
+        <button className="new-mission" onClick={() => setMissionModalMode("new")}><span>+</span> New mission</button>
+        <section className="mission-library" aria-label="Saved missions">
+          <button
+            className="mission-library-toggle"
+            onClick={() => setMissionListOpen((open) => !open)}
+            aria-expanded={missionListOpen}
+          >
+            <span>Missions</span><b>{missions.length}</b><i>{missionListOpen ? "−" : "+"}</i>
+          </button>
+          {missionListOpen && (
+            <div className="mission-library-list">
+              {missions.map((item, index) => (
+                <button
+                  className={`mission-library-item ${item.id === mission.id ? "active" : ""}`}
+                  key={item.id}
+                  onClick={() => selectMission(item.id)}
+                  aria-current={item.id === mission.id ? "true" : undefined}
+                >
+                  <span>{String(missions.length - index).padStart(2, "0")}</span>
+                  <strong>{item.title}</strong>
+                  <i aria-hidden="true" />
+                </button>
+              ))}
+            </div>
+          )}
+        </section>
         <div className="sidebar-bottom">
           <div className="goal-label"><p>Your goal</p><strong>{12 + contacted.length} / 100</strong></div>
           <div className="progress-track"><span style={{ width: `${12 + contacted.length}%` }} /></div>
@@ -331,9 +546,14 @@ export default function Home() {
 
       <div className="mobile-header">
         <button className="brand" onClick={() => setView("radar")}><span className="brand-mark">100</span><span>CALLS</span></button>
-        <select aria-label="Change section" value={view} onChange={(event) => setView(event.target.value as View)}>
-          {tabs.map((tab) => <option key={tab.id} value={tab.id}>{tab.label}</option>)}
-        </select>
+        <div className="mobile-header-controls">
+          <select aria-label="Select mission" value={mission.id} onChange={(event) => selectMission(event.target.value)}>
+            {missions.map((item) => <option key={item.id} value={item.id}>{item.title}</option>)}
+          </select>
+          <select aria-label="Change section" value={view} onChange={(event) => setView(event.target.value as View)}>
+            {tabs.map((tab) => <option key={tab.id} value={tab.id}>{tab.label}</option>)}
+          </select>
+        </div>
       </div>
 
       <section className="workspace">
@@ -361,7 +581,7 @@ export default function Home() {
             onFind={() => findContacts(false)}
             onSelect={setSelected}
             onViewAll={() => setView("contacts")}
-            onEditMission={() => setShowMission(true)}
+            onEditMission={() => setMissionModalMode("edit")}
           />
         )}
 
@@ -396,7 +616,14 @@ export default function Home() {
         />
       )}
 
-      {showMission && <MissionModal mission={mission} onClose={() => setShowMission(false)} onSave={saveMission} />}
+      {missionModalMode && (
+        <MissionModal
+          mode={missionModalMode}
+          mission={missionModalMode === "edit" ? mission : null}
+          onClose={() => setMissionModalMode(null)}
+          onSave={saveMission}
+        />
+      )}
       {toast && <div className="toast" role="status"><span>✓</span>{toast}</div>}
     </main>
   );
@@ -609,22 +836,25 @@ function ContactDrawer({ contact, isContacted, onClose, onCopy, onContact }: {
   );
 }
 
-function MissionModal({ mission, onClose, onSave }: {
-  mission: { title: string; audience: string; question: string };
+function MissionModal({ mode, mission, onClose, onSave }: {
+  mode: MissionModalMode;
+  mission: Mission | null;
   onClose: () => void;
   onSave: (event: FormEvent<HTMLFormElement>) => void;
 }) {
+  const editing = mode === "edit";
   return (
     <div className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="mission-title">
       <button className="modal-backdrop" onClick={onClose} aria-label="Close" />
       <form className="mission-modal" onSubmit={onSave}>
         <button type="button" className="close-button" onClick={onClose} aria-label="Close modal">×</button>
-        <span className="step-label">NEW MISSION · STEP 1 OF 1</span>
-        <h2 id="mission-title">Turn your idea into a question the market can answer.</h2>
-        <label>What do you want to validate?<textarea name="idea" required defaultValue={mission.title} rows={3} /></label>
-        <label>Which profiles do you need to speak with?<input name="audience" required defaultValue={mission.audience} /></label>
-        <label>What do you need to learn?<input name="question" required defaultValue={mission.question} /></label>
-        <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button">Build my radar <span>→</span></button></div>
+        <span className="step-label">{editing ? "EDIT MISSION" : "NEW MISSION · STEP 1 OF 1"}</span>
+        <h2 id="mission-title">{editing ? "Refine this mission without losing the rest." : "Turn your idea into a question the market can answer."}</h2>
+        <label>What do you want to validate?<textarea name="idea" required maxLength={600} defaultValue={mission?.title ?? ""} rows={3} /></label>
+        <label>Which profiles do you need to speak with?<input name="audience" required maxLength={400} defaultValue={mission?.audience ?? ""} /></label>
+        <label>What do you need to learn?<input name="question" required maxLength={400} defaultValue={mission?.question ?? ""} /></label>
+        {editing && <p className="mission-edit-note">Editing the mission resets its current GPT research because the target has changed.</p>}
+        <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button">{editing ? "Save changes" : "Create mission"} <span>→</span></button></div>
       </form>
     </div>
   );
