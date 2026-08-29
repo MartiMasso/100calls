@@ -118,6 +118,11 @@ type PersistedMissionResearch = {
 
 type WorkspaceSyncStatus = "loading" | "saving" | "saved" | "error";
 
+type WorkspaceLoadResponse = {
+  rows?: Array<{ mission_id?: unknown; state?: unknown; updated_at?: unknown }>;
+  error?: string;
+};
+
 const MISSION_METADATA_KEY = "one_hundred_calls_workspace";
 const starterMission: Mission = {
   id: "late-payments-smbs",
@@ -376,10 +381,12 @@ export default function Home() {
   const [workspaceSyncStatus, setWorkspaceSyncStatus] = useState<WorkspaceSyncStatus>("loading");
   const [workspaceStorageError, setWorkspaceStorageError] = useState("");
   const sessionUserId = session?.user.id;
+  const sessionAccessToken = session?.access_token;
 
   const queueResearchPersistence = useCallback((snapshot: Record<string, MissionResearch>, force = false) => {
     const userId = sessionUserId;
-    if (!userId || researchHydratedUserRef.current !== userId) return Promise.resolve();
+    const accessToken = sessionAccessToken;
+    if (!userId || !accessToken || researchHydratedUserRef.current !== userId) return Promise.resolve();
 
     const changedRows = Object.entries(snapshot).flatMap(([missionId, research]) => {
       const state = toPersistedMissionResearch(research);
@@ -400,13 +407,20 @@ export default function Home() {
     const operation = researchSaveQueueRef.current
       .catch(() => undefined)
       .then(async () => {
-        const { error } = await supabase
-          .from("mission_workspaces")
-          .upsert(
-            changedRows.map(({ user_id, mission_id, state, updated_at }) => ({ user_id, mission_id, state, updated_at })),
-            { onConflict: "user_id,mission_id" },
-          );
-        if (error) throw error;
+        const response = await fetch("/api/workspace", {
+          method: "POST",
+          headers: {
+            authorization: `Bearer ${accessToken}`,
+            "content-type": "application/json",
+          },
+          body: JSON.stringify({
+            rows: changedRows.map(({ mission_id: missionId, state }) => ({ missionId, state })),
+          }),
+        });
+        if (!response.ok) {
+          const result = await response.json().catch(() => ({})) as { error?: string };
+          throw new Error(result.error || "Your latest mission changes could not be saved.");
+        }
         changedRows.forEach(({ mission_id: missionId, hash }) => {
           persistedResearchHashesRef.current[missionId] = hash;
         });
@@ -424,7 +438,7 @@ export default function Home() {
       },
     );
     return operation;
-  }, [sessionUserId]);
+  }, [sessionAccessToken, sessionUserId]);
 
   useEffect(() => {
     let active = true;
@@ -447,14 +461,34 @@ export default function Home() {
       const nextMissions = storedWorkspace?.missions ?? [starterMission];
       const nextActiveMissionId = storedWorkspace?.activeMissionId ?? starterMission.id;
 
-      const { data, error } = await supabase
-        .from("mission_workspaces")
-        .select("mission_id,state")
-        .eq("user_id", nextSession.user.id);
+      const response = await fetch("/api/workspace", {
+        headers: { authorization: `Bearer ${nextSession.access_token}` },
+        cache: "no-store",
+      });
+      const result = await response.json().catch(() => ({})) as WorkspaceLoadResponse;
       if (!active || currentHydration !== hydrationVersion) return;
 
+      if (!response.ok) {
+        setMissions(nextMissions);
+        setActiveMissionId(nextActiveMissionId);
+        setMissionResearch((current) => {
+          const preservedResearch: Record<string, MissionResearch> = {};
+          nextMissions.forEach((mission) => {
+            preservedResearch[mission.id] = current[mission.id] ?? emptyResearch();
+          });
+          return preservedResearch;
+        });
+        setWorkspaceSyncStatus("error");
+        setWorkspaceStorageError(result.error || "Saved mission data could not be loaded. Your current screen has been preserved.");
+        setAuthLoading(false);
+        return;
+      }
+
       const storedResearch = new Map(
-        (data ?? []).map((row) => [row.mission_id, readPersistedMissionResearch(row.state)]),
+        (result.rows ?? []).flatMap((row) => {
+          const missionId = cleanMissionField(row.mission_id, 100);
+          return missionId ? [[missionId, readPersistedMissionResearch(row.state)] as const] : [];
+        }),
       );
       const nextResearch: Record<string, MissionResearch> = {};
       nextMissions.forEach((mission) => {
@@ -470,18 +504,17 @@ export default function Home() {
       setFilter("All");
       setQuery("");
       researchHydratedUserRef.current = nextSession.user.id;
-      if (error) {
-        setWorkspaceSyncStatus("error");
-        setWorkspaceStorageError("Saved mission data could not be loaded. Complete the workspace storage setup before continuing.");
-      } else {
-        setWorkspaceSyncStatus("saved");
-      }
+      setWorkspaceSyncStatus("saved");
       setAuthLoading(false);
     };
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!active) return;
       if (event === "INITIAL_SESSION") return;
+      if (event === "SIGNED_IN" && nextSession && researchHydratedUserRef.current === nextSession.user.id) {
+        setSession(nextSession);
+        return;
+      }
       if (event === "SIGNED_IN" || event === "PASSWORD_RECOVERY" || event === "SIGNED_OUT") {
         if (event !== "SIGNED_OUT") setAuthLoading(true);
         window.setTimeout(() => {

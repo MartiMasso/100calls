@@ -30,10 +30,11 @@ test("server-renders the 100 Calls application shell", async () => {
 });
 
 test("keeps the product flow unified, persistent, and bounded", async () => {
-  const [page, css, route, migration] = await Promise.all([
+  const [page, css, route, workspaceRoute, migration] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ai/research/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/workspace/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260829103000_create_mission_workspaces.sql", import.meta.url), "utf8"),
   ]);
 
@@ -54,12 +55,18 @@ test("keeps the product flow unified, persistent, and bounded", async () => {
   assert.match(page, /Math\.min\(200/);
   assert.match(route, /web_search/);
 
-  assert.match(page, /from\("mission_workspaces"\)/);
+  assert.match(page, /fetch\("\/api\/workspace"/);
   assert.match(page, /All changes saved/);
   assert.match(page, /queueResearchPersistence\(missionResearch, true\)/);
+  assert.match(page, /researchHydratedUserRef\.current === nextSession\.user\.id/);
   assert.match(page, /preserving progress while the strategy adapts/);
   assert.match(page, /stage: "refine"/);
   assert.doesNotMatch(page, /updateMissionResearch\(mission\.id, \(\) => emptyResearch\(\)\)/);
+  assert.match(workspaceRoute, /export async function GET/);
+  assert.match(workspaceRoute, /export async function POST/);
+  assert.match(workspaceRoute, /auth\/v1\/user/);
+  assert.match(workspaceRoute, /resolution=merge-duplicates/);
+  assert.match(workspaceRoute, /user_id: auth\.userId/);
   assert.match(migration, /create table if not exists public\.mission_workspaces/);
   assert.match(migration, /enable row level security/);
   assert.match(migration, /auth\.uid\(\)/);
