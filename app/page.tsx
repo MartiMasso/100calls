@@ -11,6 +11,28 @@ type Mission = {
   title: string;
   audience: string;
   question: string;
+  context: string;
+};
+type LinkedInWorkflow = "connect_first" | "direct_when_available" | "either";
+type UserOutreachProfile = {
+  version: 1;
+  name: string;
+  role: string;
+  organization: string;
+  background: string;
+  preferredLanguage: string;
+  linkedinConnectionLimit: 0 | 200 | 300;
+  linkedinWorkflow: LinkedInWorkflow;
+};
+type OutreachChannel = "Email" | "LinkedIn connection" | "LinkedIn message" | "Public contact form" | "No direct route";
+type OutreachDrafts = {
+  emailSubject: string;
+  emailBody: string;
+  linkedinConnectionMessage: string;
+  linkedinDirectMessage: string;
+  contactFormMessage: string;
+  recommendedChannel: OutreachChannel;
+  channelRationale: string;
 };
 type Contact = {
   id: number;
@@ -30,6 +52,8 @@ type Contact = {
   linkedinUrl?: string;
   contactMethod?: string;
   contactUrl?: string;
+  publicEmail?: string;
+  outreach?: OutreachDrafts;
   aiGenerated?: boolean;
 };
 
@@ -79,7 +103,14 @@ type ContactResearchResponse = {
     linkedinUrl: string;
     contactMethod: string;
     contactUrl: string;
+    publicEmail: string;
   }>;
+};
+
+type OutreachResponse = {
+  stage: "outreach";
+  model: string;
+  outreach: OutreachDrafts;
 };
 
 type MissionResearch = {
@@ -124,11 +155,23 @@ type WorkspaceLoadResponse = {
 };
 
 const MISSION_METADATA_KEY = "one_hundred_calls_workspace";
+const OUTREACH_PROFILE_METADATA_KEY = "one_hundred_calls_outreach_profile";
+const defaultOutreachProfile: UserOutreachProfile = {
+  version: 1,
+  name: "",
+  role: "",
+  organization: "",
+  background: "",
+  preferredLanguage: "English",
+  linkedinConnectionLimit: 200,
+  linkedinWorkflow: "connect_first",
+};
 const starterMission: Mission = {
   id: "late-payments-smbs",
   title: "Validate a tool that reduces late payments for SMBs",
   audience: "finance leaders, B2B founders, and collections experts",
   question: "the problem, urgency, and willingness to pay",
+  context: "",
 };
 
 const emptyResearch = (): MissionResearch => ({
@@ -155,6 +198,48 @@ function cleanStoredUrl(value: unknown): string {
   } catch {
     return "";
   }
+}
+
+function cleanStoredEmail(value: unknown): string {
+  const email = cleanMissionField(value, 254).toLowerCase();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "";
+}
+
+function readStoredOutreach(value: unknown): OutreachDrafts | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  const candidate = value as Record<string, unknown>;
+  const requestedChannel = cleanMissionField(candidate.recommendedChannel, 40);
+  const allowedChannels = new Set<OutreachChannel>(["Email", "LinkedIn connection", "LinkedIn message", "Public contact form", "No direct route"]);
+  const outreach: OutreachDrafts = {
+    emailSubject: cleanMissionField(candidate.emailSubject, 200),
+    emailBody: cleanMissionField(candidate.emailBody, 2400),
+    linkedinConnectionMessage: cleanMissionField(candidate.linkedinConnectionMessage, 300),
+    linkedinDirectMessage: cleanMissionField(candidate.linkedinDirectMessage, 1800),
+    contactFormMessage: cleanMissionField(candidate.contactFormMessage, 1800),
+    recommendedChannel: allowedChannels.has(requestedChannel as OutreachChannel) ? requestedChannel as OutreachChannel : "No direct route",
+    channelRationale: cleanMissionField(candidate.channelRationale, 400),
+  };
+  return outreach.channelRationale && Object.values(outreach).some((item) => typeof item === "string" && item.length > 0)
+    ? outreach
+    : undefined;
+}
+
+function readStoredOutreachProfile(metadata: Record<string, unknown> | undefined): UserOutreachProfile {
+  const stored = metadata?.[OUTREACH_PROFILE_METADATA_KEY];
+  if (!stored || typeof stored !== "object") return defaultOutreachProfile;
+  const candidate = stored as Record<string, unknown>;
+  const requestedLimit = candidate.linkedinConnectionLimit;
+  const requestedWorkflow = candidate.linkedinWorkflow;
+  return {
+    version: 1,
+    name: cleanMissionField(candidate.name, 120),
+    role: cleanMissionField(candidate.role, 160),
+    organization: cleanMissionField(candidate.organization, 160),
+    background: cleanMissionField(candidate.background, 1600),
+    preferredLanguage: cleanMissionField(candidate.preferredLanguage, 80) || "English",
+    linkedinConnectionLimit: requestedLimit === 0 || requestedLimit === 300 ? requestedLimit : 200,
+    linkedinWorkflow: requestedWorkflow === "direct_when_available" || requestedWorkflow === "either" ? requestedWorkflow : "connect_first",
+  };
 }
 
 function cleanStoredNumber(value: unknown, minimum: number, maximum: number): number | null {
@@ -250,6 +335,8 @@ function readStoredContact(value: unknown): Contact | null {
     linkedinUrl: cleanStoredUrl(candidate.linkedinUrl) || undefined,
     contactMethod: cleanMissionField(candidate.contactMethod, 240) || undefined,
     contactUrl: cleanStoredUrl(candidate.contactUrl) || undefined,
+    publicEmail: cleanStoredEmail(candidate.publicEmail) || undefined,
+    outreach: readStoredOutreach(candidate.outreach),
     aiGenerated: candidate.aiGenerated === true,
   };
   return contact.id && contact.initials && contact.name && contact.role && contact.company && contact.sector
@@ -326,8 +413,9 @@ function readStoredMission(value: unknown): Mission | null {
     title: cleanMissionField(candidate.title, 600),
     audience: cleanMissionField(candidate.audience, 400),
     question: cleanMissionField(candidate.question, 400),
+    context: cleanMissionField(candidate.context, 2500),
   };
-  return Object.values(mission).every(Boolean) ? mission : null;
+  return mission.id && mission.title && mission.audience && mission.question ? mission : null;
 }
 
 function readStoredMissionWorkspace(metadata: Record<string, unknown> | undefined): StoredMissionWorkspace | null {
@@ -358,7 +446,11 @@ export default function Home() {
     typeof window !== "undefined" && new URLSearchParams(window.location.search).get("mode") === "reset"
   );
   const [showAccount, setShowAccount] = useState(false);
+  const [showOutreachSettings, setShowOutreachSettings] = useState(false);
+  const [userOutreachProfile, setUserOutreachProfile] = useState<UserOutreachProfile>(defaultOutreachProfile);
+  const [generatingOutreachId, setGeneratingOutreachId] = useState<number | null>(null);
   const accountMenuRef = useRef<HTMLDivElement>(null);
+  const outreachRequestsRef = useRef<Set<number>>(new Set());
   const missionSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const researchSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const researchHydratedUserRef = useRef<string | null>(null);
@@ -452,12 +544,14 @@ export default function Home() {
       setSession(nextSession);
       setWorkspaceStorageError("");
       if (!nextSession) {
+        setUserOutreachProfile(defaultOutreachProfile);
         setWorkspaceSyncStatus("loading");
         setAuthLoading(false);
         return;
       }
 
       const storedWorkspace = readStoredMissionWorkspace(nextSession.user.user_metadata as Record<string, unknown> | undefined);
+      setUserOutreachProfile(readStoredOutreachProfile(nextSession.user.user_metadata as Record<string, unknown> | undefined));
       const nextMissions = storedWorkspace?.missions ?? [starterMission];
       const nextActiveMissionId = storedWorkspace?.activeMissionId ?? starterMission.id;
 
@@ -612,6 +706,49 @@ export default function Home() {
       });
   };
 
+  const persistOutreachProfile = (profile: UserOutreachProfile) => {
+    missionSaveQueueRef.current = missionSaveQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const { error } = await supabase.auth.updateUser({
+          data: { [OUTREACH_PROFILE_METADATA_KEY]: profile },
+        });
+        if (error) throw error;
+      })
+      .catch(() => {
+        notify("Outreach settings changed, but they could not be saved to your account");
+      });
+  };
+
+  const saveMissionContext = (context: string) => {
+    const cleanedContext = cleanMissionField(context, 2500);
+    const nextMissions = missions.map((item) => item.id === mission.id ? { ...item, context: cleanedContext } : item);
+    setMissions(nextMissions);
+    persistMissionWorkspace(nextMissions, mission.id);
+    notify(cleanedContext ? "Mission context saved · your progress is unchanged" : "Mission context removed · your progress is unchanged");
+  };
+
+  const saveOutreachSettings = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const data = new FormData(event.currentTarget);
+    const requestedLimit = Number(data.get("linkedinConnectionLimit"));
+    const requestedWorkflow = cleanMissionField(data.get("linkedinWorkflow"), 40);
+    const profile: UserOutreachProfile = {
+      version: 1,
+      name: cleanMissionField(data.get("name"), 120),
+      role: cleanMissionField(data.get("role"), 160),
+      organization: cleanMissionField(data.get("organization"), 160),
+      background: cleanMissionField(data.get("background"), 1600),
+      preferredLanguage: cleanMissionField(data.get("preferredLanguage"), 80) || "English",
+      linkedinConnectionLimit: requestedLimit === 0 || requestedLimit === 300 ? requestedLimit : 200,
+      linkedinWorkflow: requestedWorkflow === "direct_when_available" || requestedWorkflow === "either" ? requestedWorkflow : "connect_first",
+    };
+    setUserOutreachProfile(profile);
+    persistOutreachProfile(profile);
+    setShowOutreachSettings(false);
+    notify("Outreach settings saved");
+  };
+
   const selectMission = (missionId: string) => {
     if (missionId === mission.id) return;
     setActiveMissionId(missionId);
@@ -711,6 +848,7 @@ export default function Home() {
             batchSize: Math.min(20, requestedTotal - existingContacts.length - gathered.length),
             existingNames: [...existingContacts, ...gathered].map((contact) => `${contact.name} — ${contact.company}`),
             extraInstructions,
+            outreachProfile: userOutreachProfile,
           }),
         });
         const result = await response.json() as ContactResearchResponse | { error?: string };
@@ -742,6 +880,7 @@ export default function Home() {
             linkedinUrl: profile.linkedinUrl,
             contactMethod: profile.contactMethod,
             contactUrl: profile.contactUrl,
+            publicEmail: profile.publicEmail,
             aiGenerated: true,
           }];
         });
@@ -768,6 +907,60 @@ export default function Home() {
       }));
       notify("AI research needs your attention");
     }
+  };
+
+  const generateOutreach = async (contact: Contact, force = false) => {
+    if ((!force && contact.outreach) || outreachRequestsRef.current.has(contact.id)) return;
+    outreachRequestsRef.current.add(contact.id);
+    setGeneratingOutreachId(contact.id);
+    try {
+      const response = await fetch("/api/ai/research", {
+        method: "POST",
+        headers: {
+          authorization: `Bearer ${session?.access_token ?? ""}`,
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          mission,
+          stage: "outreach",
+          contact: {
+            name: contact.name,
+            role: contact.role,
+            company: contact.company,
+            sector: contact.sector,
+            angle: contact.angle,
+            reason: contact.reason,
+            linkedinUrl: contact.linkedinUrl ?? "",
+            contactUrl: contact.contactUrl ?? "",
+            contactMethod: contact.contactMethod ?? "",
+            publicEmail: contact.publicEmail ?? "",
+          },
+          outreachProfile: userOutreachProfile,
+        }),
+      });
+      const result = await response.json() as OutreachResponse | { error?: string };
+      if (!response.ok || !("outreach" in result)) {
+        throw new Error("error" in result && result.error ? result.error : "Tailored outreach could not be prepared.");
+      }
+      const updatedContact = { ...contact, outreach: result.outreach };
+      updateMissionResearch(mission.id, (current) => ({
+        ...current,
+        contacts: current.contacts.map((item) => item.id === contact.id ? updatedContact : item),
+      }));
+      setSelected((current) => current?.id === contact.id ? updatedContact : current);
+      notify("Channel-specific outreach ready");
+    } catch (outreachError) {
+      const message = outreachError instanceof Error ? outreachError.message : "Tailored outreach could not be prepared.";
+      notify(message);
+    } finally {
+      outreachRequestsRef.current.delete(contact.id);
+      setGeneratingOutreachId((current) => current === contact.id ? null : current);
+    }
+  };
+
+  const openContact = (contact: Contact) => {
+    setSelected(contact);
+    if (!contact.outreach) void generateOutreach(contact);
   };
 
   const addStrategyNote = async (event: FormEvent<HTMLFormElement>) => {
@@ -840,6 +1033,7 @@ export default function Home() {
     } else {
       const newMission: Mission = {
         id: crypto.randomUUID(),
+        context: "",
         ...fields,
       };
       const nextMissions = [newMission, ...missions];
@@ -857,10 +1051,9 @@ export default function Home() {
     setQuery("");
   };
 
-  const copyMessage = async (contact: Contact) => {
-    const message = contact.message ?? `Hi ${contact.name.split(" ")[0]}, I'm exploring ${mission.title.toLowerCase()}. Your experience at ${contact.company} feels especially relevant. I'm not trying to sell you anything—would you be open to a 20-minute conversation so I can test what I'm learning?`;
-    try { await navigator.clipboard.writeText(message); } catch { /* Clipboard can be unavailable in previews. */ }
-    notify("Message copied");
+  const copyText = async (text: string, label: string) => {
+    try { await navigator.clipboard.writeText(text); } catch { /* Clipboard can be unavailable in previews. */ }
+    notify(`${label} copied`);
   };
 
   const finishRecovery = () => {
@@ -967,6 +1160,7 @@ export default function Home() {
             <div className="account-menu">
               <span className="eyebrow">SIGNED IN AS</span>
               <strong>{accountEmail}</strong>
+              <button onClick={() => { setShowAccount(false); setShowOutreachSettings(true); }}>Outreach settings</button>
               <button onClick={() => { setShowAccount(false); setRecoveryMode(true); }}>Change password</button>
               <button onClick={signOut}>Sign out</button>
             </div>
@@ -990,6 +1184,7 @@ export default function Home() {
           filter={filter}
           onBuildPlan={() => buildPlan(mission)}
           onEditMission={() => setMissionModalMode("edit")}
+          onSaveContext={saveMissionContext}
           onToggleStrategy={() => setStrategyOpen((open) => !open)}
           onToggleCandidates={() => setCandidateListOpen((open) => !open)}
           onAddNote={setNoteSector}
@@ -997,7 +1192,7 @@ export default function Home() {
           onExpand={() => setExpansionOpen(true)}
           onQuery={setQuery}
           onFilter={setFilter}
-          onSelect={setSelected}
+          onSelect={openContact}
         />
       </section>
 
@@ -1005,9 +1200,20 @@ export default function Home() {
         <ContactDrawer
           contact={selected}
           isContacted={contacted.includes(selected.id)}
+          isGenerating={generatingOutreachId === selected.id}
+          linkedinConnectionLimit={userOutreachProfile.linkedinConnectionLimit}
           onClose={() => setSelected(null)}
-          onCopy={() => copyMessage(selected)}
+          onCopy={copyText}
+          onGenerate={() => void generateOutreach(selected, true)}
           onContact={() => markContacted(selected.id)}
+        />
+      )}
+
+      {showOutreachSettings && (
+        <OutreachSettingsModal
+          profile={userOutreachProfile}
+          onClose={() => setShowOutreachSettings(false)}
+          onSave={saveOutreachSettings}
         />
       )}
 
@@ -1065,6 +1271,7 @@ function MissionWorkspace({
   filter,
   onBuildPlan,
   onEditMission,
+  onSaveContext,
   onToggleStrategy,
   onToggleCandidates,
   onAddNote,
@@ -1091,6 +1298,7 @@ function MissionWorkspace({
   filter: string;
   onBuildPlan: () => void;
   onEditMission: () => void;
+  onSaveContext: (context: string) => void;
   onToggleStrategy: () => void;
   onToggleCandidates: () => void;
   onAddNote: (sector: string) => void;
@@ -1111,6 +1319,7 @@ function MissionWorkspace({
           <p><strong>What to learn:</strong> {mission.question}</p>
         </div>
         <button className="edit-objective" onClick={onEditMission}><span>✎</span>Edit objective</button>
+        <MissionContextPanel key={`${mission.id}:${mission.context}`} mission={mission} onSave={onSaveContext} />
       </section>
 
       {aiError && <div className="workspace-error" role="alert"><span>!</span><p>{aiError}</p></div>}
@@ -1632,13 +1841,76 @@ function ContactCard({ contact, onSelect }: { contact: Contact; onSelect: (conta
   );
 }
 
-function ContactDrawer({ contact, isContacted, onClose, onCopy, onContact }: {
+function MissionContextPanel({ mission, onSave }: { mission: Mission; onSave: (context: string) => void }) {
+  const [editing, setEditing] = useState(false);
+  const [context, setContext] = useState(mission.context);
+
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    onSave(context);
+    setEditing(false);
+  };
+
+  return (
+    <div className={`mission-context ${mission.context ? "has-context" : ""}`}>
+      <div className="mission-context-heading">
+        <div>
+          <span className="eyebrow">CONTEXT FOR OUTREACH</span>
+          <strong>{mission.context ? "Used to personalize every message in this mission" : "Help each message sound like it comes from you"}</strong>
+        </div>
+        {!editing && <button type="button" onClick={() => setEditing(true)}>{mission.context ? "Edit context" : "+ Add context"}</button>}
+      </div>
+      {editing ? (
+        <form onSubmit={submit}>
+          <textarea
+            value={context}
+            onChange={(event) => setContext(event.target.value)}
+            maxLength={2500}
+            rows={5}
+            placeholder="Add what you are building, your background or credibility, relevant links, geography, constraints, and anything the recipient should know."
+          />
+          <div><small>{context.length} / 2500</small><button type="button" onClick={() => { setContext(mission.context); setEditing(false); }}>Cancel</button><button className="primary-button">Save context <span>→</span></button></div>
+        </form>
+      ) : mission.context ? (
+        <p>{mission.context}</p>
+      ) : (
+        <p className="context-placeholder">For example: your role, why you care about this problem, what you have already built, useful proof, preferred tone, or a relevant link. Adding context never resets the strategy or contact progress.</p>
+      )}
+    </div>
+  );
+}
+
+function OutreachDraftCard({ label, meta, text, onCopy }: {
+  label: string;
+  meta?: string;
+  text: string;
+  onCopy: (text: string, label: string) => void;
+}) {
+  return (
+    <article className="outreach-draft-card">
+      <header><strong>{label}</strong>{meta && <small>{meta}</small>}</header>
+      <p>{text}</p>
+      <button className="copy-button" onClick={() => onCopy(text, label)}>Copy {label.toLowerCase()} <span>⧉</span></button>
+    </article>
+  );
+}
+
+function ContactDrawer({ contact, isContacted, isGenerating, linkedinConnectionLimit, onClose, onCopy, onGenerate, onContact }: {
   contact: Contact;
   isContacted: boolean;
+  isGenerating: boolean;
+  linkedinConnectionLimit: 0 | 200 | 300;
   onClose: () => void;
-  onCopy: () => void;
+  onCopy: (text: string, label: string) => void;
+  onGenerate: () => void;
   onContact: () => void;
 }) {
+  const fallbackMessage = contact.message ?? `Hi ${contact.name.split(" ")[0]}, I'm researching this problem and your experience at ${contact.company} feels especially relevant. Would you be open to a brief conversation?`;
+  const outreach = contact.outreach;
+  const hasEmail = Boolean(contact.publicEmail && outreach?.emailBody);
+  const hasLinkedInConnection = Boolean(contact.linkedinUrl && outreach?.linkedinConnectionMessage && linkedinConnectionLimit > 0);
+  const hasLinkedInDirect = Boolean(contact.linkedinUrl && outreach?.linkedinDirectMessage);
+  const hasContactForm = Boolean(contact.contactUrl && outreach?.contactFormMessage);
   return (
     <div className="drawer-layer" role="dialog" aria-modal="true" aria-label={`Prepare outreach to ${contact.name}`}>
       <button className="drawer-backdrop" onClick={onClose} aria-label="Close" />
@@ -1647,14 +1919,60 @@ function ContactDrawer({ contact, isContacted, onClose, onCopy, onContact }: {
         <div className="drawer-profile"><span className={`contact-avatar large ${contact.color}`}>{contact.initials}</span><div><span className="fit"><i /> {contact.fit}% fit</span><h2>{contact.name}</h2><p>{contact.role} · {contact.company}</p><small>{contact.sector}</small></div></div>
         <div className="contact-routes">
           {contact.linkedinUrl && <a href={contact.linkedinUrl} target="_blank" rel="noreferrer"><span>in</span><div><strong>LinkedIn profile</strong><small>Open verified public profile</small></div><b>↗</b></a>}
+          {contact.publicEmail && <a href={`mailto:${contact.publicEmail}`}><span>@</span><div><strong>{contact.publicEmail}</strong><small>Published professional email</small></div><b>↗</b></a>}
           {contact.contactUrl && <a href={contact.contactUrl} target="_blank" rel="noreferrer"><span>✉</span><div><strong>Public contact route</strong><small>{contact.contactMethod || "Official professional contact page"}</small></div><b>↗</b></a>}
           {contact.sourceUrl && contact.sourceUrl !== contact.linkedinUrl && <a href={contact.sourceUrl} target="_blank" rel="noreferrer"><span>✓</span><div><strong>Verification source</strong><small>Confirm role and professional relevance</small></div><b>↗</b></a>}
         </div>
         <section className="drawer-section"><span className="eyebrow">HOW TO REACH THEM RESPONSIBLY</span><p>{contact.warm}</p></section>
         <section className="drawer-section"><span className="eyebrow">CONVERSATION ANGLE</span><p>{contact.angle}</p></section>
-        <section className="drawer-section"><span className="eyebrow">SUGGESTED MESSAGE</span><div className="draft-message generated-message"><p>{contact.message ?? `Hi ${contact.name.split(" ")[0]}, I'm exploring a way to help SMBs reduce late payments. Your experience at ${contact.company} feels especially relevant. I'm not trying to sell you anything—would you be open to a 20-minute conversation so I can test what I'm learning?`}</p></div><button className="copy-button" onClick={onCopy}>Copy message <span>⧉</span></button></section>
+        <section className="drawer-section outreach-drafts">
+          <div className="outreach-drafts-heading"><div><span className="eyebrow">OUTREACH DRAFTS</span><strong>{outreach ? `Recommended: ${outreach.recommendedChannel}` : "Personalizing by available channel"}</strong></div>{outreach && <button onClick={onGenerate} disabled={isGenerating}>{isGenerating ? "Updating…" : "Regenerate"}</button>}</div>
+          {outreach?.channelRationale && <p className="channel-rationale">{outreach.channelRationale}</p>}
+          {isGenerating && <div className="outreach-loading"><i className="spinner dark" /><span>Using your mission context, profile and this person’s role…</span></div>}
+          {!isGenerating && outreach && (
+            <div className="outreach-draft-list">
+              {hasEmail && <OutreachDraftCard label="Email" meta={outreach.emailSubject} text={`Subject: ${outreach.emailSubject}\n\n${outreach.emailBody}`} onCopy={onCopy} />}
+              {hasLinkedInConnection && <OutreachDraftCard label="LinkedIn connection note" meta={`${outreach.linkedinConnectionMessage.length} / ${linkedinConnectionLimit} characters`} text={outreach.linkedinConnectionMessage} onCopy={onCopy} />}
+              {hasLinkedInDirect && <OutreachDraftCard label="LinkedIn direct message" meta="For an existing connection or message access" text={outreach.linkedinDirectMessage} onCopy={onCopy} />}
+              {hasContactForm && <OutreachDraftCard label="Public contact form" meta={contact.contactMethod} text={outreach.contactFormMessage} onCopy={onCopy} />}
+              {!hasEmail && !hasLinkedInConnection && !hasLinkedInDirect && !hasContactForm && <p className="no-channel-draft">No verified direct route is available yet. Use the public source to find the appropriate professional channel before sending anything.</p>}
+            </div>
+          )}
+          {!isGenerating && !outreach && <><div className="draft-message generated-message"><p>{fallbackMessage}</p></div><button className="copy-button" onClick={() => onCopy(fallbackMessage, "Message")}>Copy current message <span>⧉</span></button><button className="secondary-outreach-button" onClick={onGenerate}>Generate channel-specific drafts</button></>}
+        </section>
         <button className={`primary-button drawer-cta ${isContacted ? "completed" : ""}`} onClick={onContact} disabled={isContacted}>{isContacted ? "Already in follow-up" : "Mark as contacted"}<span>{isContacted ? "✓" : "→"}</span></button>
       </aside>
+    </div>
+  );
+}
+
+function OutreachSettingsModal({ profile, onClose, onSave }: {
+  profile: UserOutreachProfile;
+  onClose: () => void;
+  onSave: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <div className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="outreach-settings-title">
+      <button className="modal-backdrop" onClick={onClose} aria-label="Close" />
+      <form className="mission-modal settings-modal" onSubmit={onSave}>
+        <button type="button" className="close-button" onClick={onClose} aria-label="Close modal">×</button>
+        <span className="step-label">OUTREACH SETTINGS</span>
+        <h2 id="outreach-settings-title">Give each message a credible sender.</h2>
+        <p className="modal-intro">These details apply across missions. Mission-specific details belong in each mission’s context box.</p>
+        <div className="settings-grid">
+          <label>Your name<input name="name" maxLength={120} defaultValue={profile.name} placeholder="Martí Massó" /></label>
+          <label>Your role<input name="role" maxLength={160} defaultValue={profile.role} placeholder="Founder, researcher, student…" /></label>
+          <label>Organization<input name="organization" maxLength={160} defaultValue={profile.organization} placeholder="Company, university or independent" /></label>
+          <label>Message language<input name="preferredLanguage" maxLength={80} defaultValue={profile.preferredLanguage} placeholder="English, Spanish, match recipient…" /></label>
+        </div>
+        <label>Your background and credibility<textarea name="background" maxLength={1600} defaultValue={profile.background} rows={4} placeholder="Relevant experience, projects, domain knowledge, shared communities or links that can truthfully strengthen an introduction." /></label>
+        <div className="settings-grid">
+          <label>LinkedIn connection note allowance<select name="linkedinConnectionLimit" defaultValue={profile.linkedinConnectionLimit}><option value="0">No connection note</option><option value="200">Up to 200 characters</option><option value="300">Up to 300 characters</option></select></label>
+          <label>Preferred LinkedIn approach<select name="linkedinWorkflow" defaultValue={profile.linkedinWorkflow}><option value="connect_first">Connect first, then follow up</option><option value="direct_when_available">Direct message when available</option><option value="either">Recommend the best option</option></select></label>
+        </div>
+        <p className="mission-edit-note">Choose the allowance your current LinkedIn account actually shows; LinkedIn can change limits independently of 100 Calls.</p>
+        <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button">Save settings <span>→</span></button></div>
+      </form>
     </div>
   );
 }

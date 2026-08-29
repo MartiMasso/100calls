@@ -50,10 +50,18 @@ test("keeps the product flow unified, persistent, and bounded", async () => {
   assert.match(css, /\.strategy-route/);
   assert.match(css, /\.candidate-row/);
 
-  assert.match(route, /type ResearchStage = "plan" \| "refine" \| "contacts"/);
+  assert.match(route, /type ResearchStage = "plan" \| "refine" \| "contacts" \| "outreach"/);
   assert.match(route, /maxItems: 20/);
   assert.match(page, /Math\.min\(200/);
   assert.match(route, /web_search/);
+  assert.match(page, /CONTEXT FOR OUTREACH/);
+  assert.match(page, /Outreach settings/);
+  assert.match(page, /LinkedIn connection note/);
+  assert.match(page, /Public contact form/);
+  assert.match(page, /one_hundred_calls_outreach_profile/);
+  assert.match(route, /outreachDraftSchema/);
+  assert.match(route, /Never infer email patterns/);
+  assert.match(route, /linkedinConnectionLimit/);
 
   assert.match(page, /fetch\("\/api\/workspace"/);
   assert.match(page, /All changes saved/);
