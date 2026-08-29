@@ -1,7 +1,7 @@
 "use client";
 
 import type { Session } from "@supabase/supabase-js";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { restorePersistedSession, supabase } from "@/lib/supabase";
 
 type AuthMode = "signin" | "signup" | "forgot" | "reset";
@@ -107,6 +107,17 @@ type StoredMissionWorkspace = {
   missions: Mission[];
 };
 
+type PersistedMissionResearch = {
+  version: 1;
+  contacts: Contact[];
+  plan: ActionPlan | null;
+  discovered: boolean;
+  contacted: number[];
+  strategyNotes: StrategyNote[];
+};
+
+type WorkspaceSyncStatus = "loading" | "saving" | "saved" | "error";
+
 const MISSION_METADATA_KEY = "one_hundred_calls_workspace";
 const starterMission: Mission = {
   id: "late-payments-smbs",
@@ -129,6 +140,177 @@ const emptyResearch = (): MissionResearch => ({
 
 function cleanMissionField(value: unknown, maxLength: number): string {
   return typeof value === "string" ? value.trim().slice(0, maxLength) : "";
+}
+
+function cleanStoredUrl(value: unknown): string {
+  const url = cleanMissionField(value, 500);
+  if (!url) return "";
+  try {
+    return new URL(url).protocol === "https:" ? url : "";
+  } catch {
+    return "";
+  }
+}
+
+function cleanStoredNumber(value: unknown, minimum: number, maximum: number): number | null {
+  return typeof value === "number" && Number.isFinite(value)
+    ? Math.min(maximum, Math.max(minimum, Math.round(value)))
+    : null;
+}
+
+function cleanStoredStringArray(value: unknown, maxItems: number, maxLength: number): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => cleanMissionField(item, maxLength)).filter(Boolean).slice(0, maxItems)
+    : [];
+}
+
+function readStoredPlanSegment(value: unknown): PlanSegment | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  const priority = candidate.priority;
+  const targetCount = cleanStoredNumber(candidate.targetCount, 1, 100);
+  const segment: PlanSegment = {
+    sector: cleanMissionField(candidate.sector, 120),
+    priority: priority === "Primary" || priority === "Secondary" || priority === "Exploratory" ? priority : "Exploratory",
+    roles: cleanStoredStringArray(candidate.roles, 8, 120),
+    why: cleanMissionField(candidate.why, 500),
+    learningGoal: cleanMissionField(candidate.learningGoal, 500),
+    targetCount: targetCount ?? 1,
+    searchApproach: cleanMissionField(candidate.searchApproach, 500),
+  };
+  return segment.sector && segment.roles.length && segment.why && segment.learningGoal && segment.searchApproach
+    ? segment
+    : null;
+}
+
+function readStoredActionPlan(value: unknown): ActionPlan | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  const segments = Array.isArray(candidate.segments)
+    ? candidate.segments.flatMap((segment) => {
+      const parsed = readStoredPlanSegment(segment);
+      return parsed ? [parsed] : [];
+    }).slice(0, 8)
+    : [];
+  const sequence = Array.isArray(candidate.sequence)
+    ? candidate.sequence.flatMap((step) => {
+      if (!step || typeof step !== "object") return [];
+      const item = step as Record<string, unknown>;
+      const parsed = {
+        title: cleanMissionField(item.title, 120),
+        detail: cleanMissionField(item.detail, 500),
+        outcome: cleanMissionField(item.outcome, 320),
+      };
+      return parsed.title && parsed.detail && parsed.outcome ? [parsed] : [];
+    }).slice(0, 8)
+    : [];
+  const recommendedInterviews = cleanStoredNumber(candidate.recommendedInterviews, 1, 100);
+  const plan: ActionPlan = {
+    objective: cleanMissionField(candidate.objective, 700),
+    hypothesis: cleanMissionField(candidate.hypothesis, 700),
+    recommendedInterviews: recommendedInterviews ?? 1,
+    segments,
+    sequence,
+    questions: cleanStoredStringArray(candidate.questions, 12, 320),
+    successCriteria: cleanStoredStringArray(candidate.successCriteria, 10, 320),
+    model: cleanMissionField(candidate.model, 120),
+  };
+  return plan.objective && plan.hypothesis && plan.segments.length && plan.sequence.length && plan.model
+    ? plan
+    : null;
+}
+
+function readStoredContact(value: unknown): Contact | null {
+  if (!value || typeof value !== "object") return null;
+  const candidate = value as Record<string, unknown>;
+  const id = cleanStoredNumber(candidate.id, 1, Number.MAX_SAFE_INTEGER);
+  const fit = cleanStoredNumber(candidate.fit, 0, 100);
+  const type = candidate.type;
+  const color = cleanMissionField(candidate.color, 20);
+  const contact: Contact = {
+    id: id ?? 0,
+    initials: cleanMissionField(candidate.initials, 6),
+    name: cleanMissionField(candidate.name, 140),
+    role: cleanMissionField(candidate.role, 180),
+    company: cleanMissionField(candidate.company, 180),
+    sector: cleanMissionField(candidate.sector, 140),
+    reason: cleanMissionField(candidate.reason, 500),
+    angle: cleanMissionField(candidate.angle, 500),
+    fit: fit ?? 0,
+    type: type === "Potential customer" || type === "Founder" || type === "Expert" ? type : "Expert",
+    color: ["coral", "mint", "blue", "yellow", "lilac", "pink"].includes(color) ? color : "blue",
+    warm: cleanMissionField(candidate.warm, 320),
+    message: cleanMissionField(candidate.message, 1200) || undefined,
+    sourceUrl: cleanStoredUrl(candidate.sourceUrl) || undefined,
+    linkedinUrl: cleanStoredUrl(candidate.linkedinUrl) || undefined,
+    contactMethod: cleanMissionField(candidate.contactMethod, 240) || undefined,
+    contactUrl: cleanStoredUrl(candidate.contactUrl) || undefined,
+    aiGenerated: candidate.aiGenerated === true,
+  };
+  return contact.id && contact.initials && contact.name && contact.role && contact.company && contact.sector
+    && contact.reason && contact.angle && contact.warm
+    ? contact
+    : null;
+}
+
+function readPersistedMissionResearch(value: unknown): MissionResearch {
+  if (!value || typeof value !== "object") return emptyResearch();
+  const candidate = value as Record<string, unknown>;
+  if (candidate.version !== 1) return emptyResearch();
+
+  const contacts = Array.isArray(candidate.contacts)
+    ? candidate.contacts.flatMap((contact) => {
+      const parsed = readStoredContact(contact);
+      return parsed ? [parsed] : [];
+    }).filter((contact, index, items) => items.findIndex((item) => item.id === contact.id) === index).slice(0, 200)
+    : [];
+  const validContactIds = new Set(contacts.map((contact) => contact.id));
+  const contacted = Array.isArray(candidate.contacted)
+    ? candidate.contacted.flatMap((id) => {
+      const parsed = cleanStoredNumber(id, 1, Number.MAX_SAFE_INTEGER);
+      return parsed && validContactIds.has(parsed) ? [parsed] : [];
+    }).filter((id, index, items) => items.indexOf(id) === index)
+    : [];
+  const strategyNotes = Array.isArray(candidate.strategyNotes)
+    ? candidate.strategyNotes.flatMap((note) => {
+      if (!note || typeof note !== "object") return [];
+      const item = note as Record<string, unknown>;
+      const parsed: StrategyNote = {
+        id: cleanMissionField(item.id, 100),
+        sector: cleanMissionField(item.sector, 140),
+        text: cleanMissionField(item.text, 700),
+        createdAt: cleanMissionField(item.createdAt, 40),
+      };
+      return parsed.id && parsed.sector && parsed.text && parsed.createdAt ? [parsed] : [];
+    }).slice(0, 500)
+    : [];
+
+  return {
+    contacts,
+    plan: readStoredActionPlan(candidate.plan),
+    error: "",
+    discovered: candidate.discovered === true || contacts.length > 0,
+    isPlanning: false,
+    isDiscovering: false,
+    isRefining: false,
+    contacted,
+    strategyNotes,
+  };
+}
+
+function toPersistedMissionResearch(research: MissionResearch): PersistedMissionResearch {
+  return {
+    version: 1,
+    contacts: research.contacts,
+    plan: research.plan,
+    discovered: research.discovered,
+    contacted: research.contacted,
+    strategyNotes: research.strategyNotes,
+  };
+}
+
+function researchHash(research: MissionResearch): string {
+  return JSON.stringify(toPersistedMissionResearch(research));
 }
 
 function readStoredMission(value: unknown): Mission | null {
@@ -173,6 +355,9 @@ export default function Home() {
   const [showAccount, setShowAccount] = useState(false);
   const accountMenuRef = useRef<HTMLDivElement>(null);
   const missionSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const researchSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
+  const researchHydratedUserRef = useRef<string | null>(null);
+  const persistedResearchHashesRef = useRef<Record<string, string>>({});
   const [selected, setSelected] = useState<Contact | null>(null);
   const [missions, setMissions] = useState<Mission[]>([starterMission]);
   const [activeMissionId, setActiveMissionId] = useState(starterMission.id);
@@ -188,56 +373,133 @@ export default function Home() {
   const [strategyOpen, setStrategyOpen] = useState(true);
   const [candidateListOpen, setCandidateListOpen] = useState(true);
   const [toast, setToast] = useState("");
+  const [workspaceSyncStatus, setWorkspaceSyncStatus] = useState<WorkspaceSyncStatus>("loading");
+  const [workspaceStorageError, setWorkspaceStorageError] = useState("");
+  const sessionUserId = session?.user.id;
+
+  const queueResearchPersistence = useCallback((snapshot: Record<string, MissionResearch>, force = false) => {
+    const userId = sessionUserId;
+    if (!userId || researchHydratedUserRef.current !== userId) return Promise.resolve();
+
+    const changedRows = Object.entries(snapshot).flatMap(([missionId, research]) => {
+      const state = toPersistedMissionResearch(research);
+      const hash = JSON.stringify(state);
+      if (!force && persistedResearchHashesRef.current[missionId] === hash) return [];
+      return [{
+        user_id: userId,
+        mission_id: missionId,
+        state,
+        updated_at: new Date().toISOString(),
+        hash,
+      }];
+    });
+    if (changedRows.length === 0) return researchSaveQueueRef.current;
+
+    setWorkspaceSyncStatus("saving");
+    setWorkspaceStorageError("");
+    const operation = researchSaveQueueRef.current
+      .catch(() => undefined)
+      .then(async () => {
+        const { error } = await supabase
+          .from("mission_workspaces")
+          .upsert(
+            changedRows.map(({ user_id, mission_id, state, updated_at }) => ({ user_id, mission_id, state, updated_at })),
+            { onConflict: "user_id,mission_id" },
+          );
+        if (error) throw error;
+        changedRows.forEach(({ mission_id: missionId, hash }) => {
+          persistedResearchHashesRef.current[missionId] = hash;
+        });
+      });
+
+    researchSaveQueueRef.current = operation;
+    void operation.then(
+      () => {
+        if (researchHydratedUserRef.current === userId) setWorkspaceSyncStatus("saved");
+      },
+      () => {
+        if (researchHydratedUserRef.current !== userId) return;
+        setWorkspaceSyncStatus("error");
+        setWorkspaceStorageError("Your latest mission changes could not be saved. Please try again before signing out.");
+      },
+    );
+    return operation;
+  }, [sessionUserId]);
 
   useEffect(() => {
     let active = true;
+    let hydrationVersion = 0;
 
-    const applySession = (nextSession: Session | null) => {
+    const applySession = async (nextSession: Session | null) => {
+      const currentHydration = ++hydrationVersion;
       if (!active) return;
+      researchHydratedUserRef.current = null;
+      persistedResearchHashesRef.current = {};
       setSession(nextSession);
-      if (!nextSession) return;
+      setWorkspaceStorageError("");
+      if (!nextSession) {
+        setWorkspaceSyncStatus("loading");
+        setAuthLoading(false);
+        return;
+      }
 
       const storedWorkspace = readStoredMissionWorkspace(nextSession.user.user_metadata as Record<string, unknown> | undefined);
       const nextMissions = storedWorkspace?.missions ?? [starterMission];
       const nextActiveMissionId = storedWorkspace?.activeMissionId ?? starterMission.id;
 
+      const { data, error } = await supabase
+        .from("mission_workspaces")
+        .select("mission_id,state")
+        .eq("user_id", nextSession.user.id);
+      if (!active || currentHydration !== hydrationVersion) return;
+
+      const storedResearch = new Map(
+        (data ?? []).map((row) => [row.mission_id, readPersistedMissionResearch(row.state)]),
+      );
+      const nextResearch: Record<string, MissionResearch> = {};
+      nextMissions.forEach((mission) => {
+        const research = storedResearch.get(mission.id) ?? emptyResearch();
+        nextResearch[mission.id] = research;
+        persistedResearchHashesRef.current[mission.id] = researchHash(research);
+      });
+
       setMissions(nextMissions);
       setActiveMissionId(nextActiveMissionId);
-      setMissionResearch((current) => {
-        const nextResearch: Record<string, MissionResearch> = {};
-        nextMissions.forEach((mission) => {
-          nextResearch[mission.id] = current[mission.id]
-            ?? emptyResearch();
-        });
-        return nextResearch;
-      });
+      setMissionResearch(nextResearch);
       setSelected(null);
       setFilter("All");
       setQuery("");
+      researchHydratedUserRef.current = nextSession.user.id;
+      if (error) {
+        setWorkspaceSyncStatus("error");
+        setWorkspaceStorageError("Saved mission data could not be loaded. Complete the workspace storage setup before continuing.");
+      } else {
+        setWorkspaceSyncStatus("saved");
+      }
+      setAuthLoading(false);
     };
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((event, nextSession) => {
       if (!active) return;
       if (event === "INITIAL_SESSION") return;
       if (event === "SIGNED_IN" || event === "PASSWORD_RECOVERY" || event === "SIGNED_OUT") {
-        applySession(nextSession);
+        if (event !== "SIGNED_OUT") setAuthLoading(true);
+        window.setTimeout(() => {
+          void applySession(nextSession);
+        }, 0);
       } else {
         setSession(nextSession);
       }
-      setAuthLoading(false);
       if (event === "PASSWORD_RECOVERY") setRecoveryMode(true);
       if (event === "SIGNED_OUT") setShowAccount(false);
     });
 
     restorePersistedSession()
       .then((persistedSession) => {
-        applySession(persistedSession);
+        void applySession(persistedSession);
       })
       .catch(() => {
-        applySession(null);
-      })
-      .finally(() => {
-        if (active) setAuthLoading(false);
+        void applySession(null);
       });
 
     return () => {
@@ -245,6 +507,11 @@ export default function Home() {
       subscription.unsubscribe();
     };
   }, []);
+
+  useEffect(() => {
+    if (!sessionUserId || researchHydratedUserRef.current !== sessionUserId) return;
+    void queueResearchPersistence(missionResearch);
+  }, [missionResearch, queueResearchPersistence, sessionUserId]);
 
   useEffect(() => {
     if (!showAccount) return;
@@ -324,8 +591,10 @@ export default function Home() {
     notify("Mission switched");
   };
 
-  const buildPlan = async (targetMission: Mission) => {
+  const buildPlan = async (targetMission: Mission, previousResearch?: MissionResearch) => {
     const targetMissionId = targetMission.id;
+    const researchContext = previousResearch ?? missionResearch[targetMissionId] ?? emptyResearch();
+    const refiningExistingPlan = Boolean(researchContext.plan);
     updateMissionResearch(targetMissionId, (current) => ({
       ...current,
       isPlanning: true,
@@ -339,7 +608,15 @@ export default function Home() {
           authorization: `Bearer ${session?.access_token ?? ""}`,
           "content-type": "application/json",
         },
-        body: JSON.stringify({ mission: targetMission, stage: "plan" }),
+        body: JSON.stringify(refiningExistingPlan && researchContext.plan ? {
+          mission: targetMission,
+          stage: "refine",
+          plan: researchContext.plan,
+          strategyNotes: researchContext.strategyNotes,
+          contactedProfiles: researchContext.contacts
+            .filter((contact) => researchContext.contacted.includes(contact.id))
+            .map((contact) => ({ name: contact.name, role: contact.role, company: contact.company, sector: contact.sector })),
+        } : { mission: targetMission, stage: "plan" }),
       });
       const result = await response.json() as PlanResponse | { error?: string };
       if (!response.ok || !("plan" in result)) {
@@ -524,10 +801,9 @@ export default function Home() {
       const updatedMission = { ...mission, ...fields };
       const nextMissions = missions.map((item) => item.id === mission.id ? updatedMission : item);
       setMissions(nextMissions);
-      updateMissionResearch(mission.id, () => emptyResearch());
       persistMissionWorkspace(nextMissions, mission.id);
-      notify("Mission updated · building a new plan");
-      void buildPlan(updatedMission);
+      notify("Mission updated · preserving progress while the strategy adapts");
+      void buildPlan(updatedMission, activeResearch);
     } else {
       const newMission: Mission = {
         id: crypto.randomUUID(),
@@ -561,7 +837,19 @@ export default function Home() {
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    try {
+      await queueResearchPersistence(missionResearch, true);
+      await Promise.all([missionSaveQueueRef.current, researchSaveQueueRef.current]);
+    } catch {
+      notify("We couldn't save your latest changes, so you are still signed in");
+      return;
+    }
+
+    const { error } = await supabase.auth.signOut();
+    if (error) {
+      notify("Sign out could not be completed");
+      return;
+    }
     setShowAccount(false);
   };
 
@@ -616,6 +904,10 @@ export default function Home() {
           <div className="goal-label"><p>Mission progress</p><strong>{contacted.length} / 100</strong></div>
           <div className="progress-track"><span style={{ width: `${contacted.length}%` }} /></div>
           <small>{contacts.length} candidates · {strategyNotes.length} learnings</small>
+          <small className={`workspace-sync workspace-sync-${workspaceSyncStatus}`}>
+            <i aria-hidden="true" />
+            {workspaceSyncStatus === "saving" ? "Saving changes…" : workspaceSyncStatus === "saved" ? "All changes saved" : workspaceSyncStatus === "error" ? "Changes not saved" : "Loading saved work…"}
+          </small>
         </div>
       </aside>
 
@@ -629,6 +921,11 @@ export default function Home() {
       </div>
 
       <section className="workspace">
+        {workspaceStorageError && (
+          <div className="storage-save-error" role="alert">
+            <span>!</span><div><strong>Changes are not being saved</strong><small>{workspaceStorageError}</small></div>
+          </div>
+        )}
         <div className="account-menu-wrap" ref={accountMenuRef}>
           <button className="account-button" onClick={() => setShowAccount((open) => !open)} aria-expanded={showAccount} aria-label="Open account menu">
             <span>{accountInitials}</span><small>{accountEmail}</small><b>⌄</b>
@@ -788,7 +1085,10 @@ function MissionWorkspace({
       {isPlanning && (
         <section className="flow-loading" aria-live="polite">
           <i className="spinner dark" />
-          <div><strong>Building the contact strategy</strong><p>Mapping sectors, roles, learning value and interview order.</p></div>
+          <div>
+            <strong>{plan ? "Updating the contact strategy" : "Building the contact strategy"}</strong>
+            <p>{plan ? "Keeping every contact, learning and follow-up while the plan adapts." : "Mapping sectors, roles, learning value and interview order."}</p>
+          </div>
         </section>
       )}
 
@@ -1343,7 +1643,7 @@ function MissionModal({ mode, mission, onClose, onSave }: {
         <label>What do you want to validate?<textarea name="idea" required maxLength={600} defaultValue={mission?.title ?? ""} rows={3} /></label>
         <label>Which profiles do you need to speak with?<input name="audience" required maxLength={400} defaultValue={mission?.audience ?? ""} /></label>
         <label>What do you need to learn?<input name="question" required maxLength={400} defaultValue={mission?.question ?? ""} /></label>
-        {editing && <p className="mission-edit-note">Changing the focus clears this mission&apos;s current plan and contacts, then automatically builds a new strategic plan.</p>}
+        {editing && <p className="mission-edit-note">Your contacts, follow-up progress and learnings will be preserved. The strategy will adapt to the revised objective.</p>}
         <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button">{editing ? "Save changes" : "Create mission"} <span>→</span></button></div>
       </form>
     </div>

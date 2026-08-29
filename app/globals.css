@@ -69,10 +69,22 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .sidebar-bottom p { margin: 0 0 12px; color: #aeb5c3; font-size: 10px; font-weight: 800; text-transform: uppercase; letter-spacing: .1em; }
 .sidebar-bottom strong { font-size: 18px; }
 .sidebar-bottom small { display: block; margin-top: 8px; color: #aeb5c3; font-size: 11px; }
+.sidebar-bottom .workspace-sync { display: flex; align-items: center; gap: 7px; margin-top: 13px; color: #aeb5c3; font-size: 9px; font-weight: 800; letter-spacing: .03em; }
+.workspace-sync i { width: 7px; height: 7px; border-radius: 50%; background: #71809b; }
+.workspace-sync-saving i { background: #f7d978; animation: sync-pulse 1s ease-in-out infinite; }
+.workspace-sync-saved i { background: var(--acid); }
+.workspace-sync-error { color: #ffab8f !important; }
+.workspace-sync-error i { background: var(--orange); }
+@keyframes sync-pulse { 50% { opacity: .35; } }
 .progress-track { height: 5px; overflow: hidden; border-radius: 5px; background: #3b465f; }
 .progress-track span { display: block; height: 100%; min-width: 8px; background: var(--acid); transition: width .35s ease; }
 
 .workspace { position: relative; margin-left: 238px; width: calc(100% - 238px); padding: 54px clamp(32px, 5.5vw, 82px) 70px; }
+.storage-save-error { max-width: 1380px; display: flex; align-items: center; gap: 12px; margin: 0 auto 18px; border: 1px solid #ff9c7f; background: #fff0eb; padding: 12px 14px; color: #9e3315; }
+.storage-save-error > span { flex: 0 0 auto; width: 23px; height: 23px; display: grid; place-items: center; border-radius: 50%; background: var(--orange); color: white; font-size: 12px; font-weight: 900; }
+.storage-save-error div { display: grid; gap: 2px; }
+.storage-save-error strong { font-size: 11px; }
+.storage-save-error small { color: #8a4d3b; font-size: 10px; line-height: 1.4; }
 .topbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
 .eyebrow { display: inline-block; color: #737887; font-size: 10px; font-weight: 900; letter-spacing: .15em; }
 h1 { max-width: 810px; margin: 8px 0 34px; font-size: clamp(40px, 5vw, 66px); line-height: .97; letter-spacing: -.055em; }
