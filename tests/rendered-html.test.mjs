@@ -68,6 +68,8 @@ test("keeps the product flow unified, persistent, and bounded", async () => {
   assert.match(route, /cumulative fields, never competing alternatives/);
   assert.match(page, /Published office or business phone/);
   assert.match(page, /Plan email outreach/);
+  assert.match(page, /const openEmailPlan/);
+  assert.match(page, /contactsMissingEmail/);
   assert.doesNotMatch(page, /Find published emails for this pool/);
 
   assert.match(page, /fetch\("\/api\/workspace"/);

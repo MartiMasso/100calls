@@ -1137,6 +1137,12 @@ export default function Home() {
     return () => window.clearTimeout(timer);
   }, [contacts, enrichContactDetails, mission, sessionAccessToken]);
 
+  const openEmailPlan = () => {
+    setShowEmailCampaign(true);
+    const contactsMissingEmail = contacts.filter((contact) => !contact.publicEmail);
+    if (contactsMissingEmail.length > 0) void enrichContactDetails(mission, contactsMissingEmail);
+  };
+
   const openContact = (contact: Contact) => {
     setSelected(contact);
     if (!contact.outreach) void generateOutreach(contact);
@@ -1374,7 +1380,7 @@ export default function Home() {
           onQuery={setQuery}
           onFilter={setFilter}
           onSelect={openContact}
-          onPlanEmail={() => setShowEmailCampaign(true)}
+          onPlanEmail={openEmailPlan}
         />
       </section>
 
