@@ -62,6 +62,13 @@ test("keeps the product flow unified, persistent, and bounded", async () => {
   assert.match(route, /outreachDraftSchema/);
   assert.match(route, /Never infer email patterns/);
   assert.match(route, /linkedinConnectionLimit/);
+  assert.match(route, /contact_enrichment/);
+  assert.match(route, /publicPhone/);
+  assert.match(route, /websiteUrl/);
+  assert.match(route, /cumulative fields, never competing alternatives/);
+  assert.match(page, /Published office or business phone/);
+  assert.match(page, /Plan email outreach/);
+  assert.doesNotMatch(page, /Find published emails for this pool/);
 
   assert.match(page, /fetch\("\/api\/workspace"/);
   assert.match(page, /All changes saved/);

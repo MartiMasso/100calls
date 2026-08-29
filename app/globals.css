@@ -314,6 +314,8 @@ h1 { max-width: 810px; margin: 8px 0 34px; font-size: clamp(40px, 5vw, 66px); li
 .contact-routes strong { font-size: 11px; }
 .contact-routes small { color: var(--muted); font-size: 9px; }
 .contact-routes > a > b { font-size: 15px; }
+.contact-route-loading { min-height: 63px; display: grid; grid-template-columns: 36px 1fr; align-items: center; gap: 12px; border: 1px dashed #aaa; padding: 10px 13px; }
+.contact-route-loading > div { display: grid; gap: 3px; }
 .warm-path { display: flex; align-items: center; gap: 13px; background: #e8efd2; padding: 15px; }
 .warm-path > span { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--acid); font-size: 19px; }
 .warm-path strong, .warm-path p { display: block; margin: 0; font-size: 11px; }
@@ -622,9 +624,13 @@ h1 { max-width: 810px; margin: 8px 0 34px; font-size: clamp(40px, 5vw, 66px); li
 .candidate-person strong { font-size: 12px; }
 .candidate-person small { color: var(--muted); font-size: 9px; }
 .candidate-value { color: #515663; font-size: 10px; line-height: 1.45; }
-.candidate-links { display: flex; gap: 5px; }
-.candidate-links i, .candidate-links b { display: grid; place-items: center; min-height: 23px; border: 1px solid #8ea8cf; background: #e5eefb; color: #174c91; padding: 0 6px; font-size: 8px; font-style: normal; font-weight: 900; }
+.candidate-links { display: flex; flex-wrap: wrap; gap: 5px; }
+.candidate-links i, .candidate-links b, .candidate-links em, .candidate-links strong { display: grid; place-items: center; min-height: 23px; border: 1px solid #8ea8cf; background: #e5eefb; color: #174c91; padding: 0 6px; font-size: 8px; font-style: normal; font-weight: 900; }
 .candidate-links b { border-color: #96a87b; background: #edf5d5; color: var(--green); }
+.candidate-links em { border-color: #c3a778; background: #fff3d7; color: #705018; }
+.candidate-links strong { border-color: #ba91ac; background: #f7e5f1; color: #7d2e66; }
+.contact-enrichment-status { display: flex; align-items: center; gap: 7px; margin-left: auto; color: var(--muted); font-size: 8px; font-weight: 900; white-space: nowrap; }
+.contact-enrichment-status + .email-plan-button { margin-left: 0; }
 .expand-pool { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin: 30px 26px 26px; border: 1.5px solid var(--ink); background: var(--paper); padding: 23px 25px; }
 .expand-pool > div { display: grid; gap: 5px; }
 .expand-pool strong { font-size: 16px; }

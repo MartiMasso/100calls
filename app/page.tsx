@@ -54,6 +54,10 @@ type Contact = {
   contactUrl?: string;
   publicEmail?: string;
   emailSourceUrl?: string;
+  publicPhone?: string;
+  phoneSourceUrl?: string;
+  websiteUrl?: string;
+  contactDetailsCheckedAt?: string;
   outreach?: OutreachDrafts;
   aiGenerated?: boolean;
 };
@@ -105,6 +109,10 @@ type ContactResearchResponse = {
     contactMethod: string;
     contactUrl: string;
     publicEmail: string;
+    emailSourceUrl: string;
+    publicPhone: string;
+    phoneSourceUrl: string;
+    websiteUrl: string;
   }>;
 };
 
@@ -120,11 +128,21 @@ type EmailBatchResponse = {
   drafts: Array<{ contactId: string; subject: string; body: string }>;
 };
 
-type EmailEnrichmentResponse = {
-  stage: "email_enrichment";
+type ContactEnrichmentResponse = {
+  stage: "contact_enrichment";
   model: string;
   checked: number;
-  results: Array<{ contactId: string; publicEmail: string; sourceUrl: string }>;
+  results: Array<{
+    contactId: string;
+    publicEmail: string;
+    emailSourceUrl: string;
+    linkedinUrl: string;
+    publicPhone: string;
+    phoneSourceUrl: string;
+    websiteUrl: string;
+    contactUrl: string;
+    contactMethod: string;
+  }>;
 };
 
 type GmailConnection = { connected: boolean; email: string; connectedAt: string };
@@ -376,6 +394,10 @@ function readStoredContact(value: unknown): Contact | null {
     contactUrl: cleanStoredUrl(candidate.contactUrl) || undefined,
     publicEmail: cleanStoredEmail(candidate.publicEmail) || undefined,
     emailSourceUrl: cleanStoredUrl(candidate.emailSourceUrl) || undefined,
+    publicPhone: cleanMissionField(candidate.publicPhone, 60) || undefined,
+    phoneSourceUrl: cleanStoredUrl(candidate.phoneSourceUrl) || undefined,
+    websiteUrl: cleanStoredUrl(candidate.websiteUrl) || undefined,
+    contactDetailsCheckedAt: cleanMissionField(candidate.contactDetailsCheckedAt, 40) || undefined,
     outreach: readStoredOutreach(candidate.outreach),
     aiGenerated: candidate.aiGenerated === true,
   };
@@ -488,11 +510,12 @@ export default function Home() {
   const [showAccount, setShowAccount] = useState(false);
   const [showOutreachSettings, setShowOutreachSettings] = useState(false);
   const [showEmailCampaign, setShowEmailCampaign] = useState(false);
-  const [isEnrichingEmails, setIsEnrichingEmails] = useState(false);
+  const [isEnrichingContacts, setIsEnrichingContacts] = useState(false);
   const [userOutreachProfile, setUserOutreachProfile] = useState<UserOutreachProfile>(defaultOutreachProfile);
   const [generatingOutreachId, setGeneratingOutreachId] = useState<number | null>(null);
   const accountMenuRef = useRef<HTMLDivElement>(null);
   const outreachRequestsRef = useRef<Set<number>>(new Set());
+  const contactEnrichmentRequestsRef = useRef<Set<string>>(new Set());
   const missionSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const researchSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const researchHydratedUserRef = useRef<string | null>(null);
@@ -731,12 +754,12 @@ export default function Home() {
     return matchesType && haystack.includes(query.toLowerCase());
   }), [contacts, filter, query]);
 
-  const notify = (message: string) => {
+  const notify = useCallback((message: string) => {
     setToast(message);
     window.setTimeout(() => setToast(""), 2600);
-  };
+  }, []);
 
-  const updateMissionResearch = (
+  const updateMissionResearch = useCallback((
     missionId: string,
     update: (current: MissionResearch) => MissionResearch,
   ) => {
@@ -744,7 +767,7 @@ export default function Home() {
       ...current,
       [missionId]: update(current[missionId] ?? emptyResearch()),
     }));
-  };
+  }, []);
 
   const persistMissionWorkspace = (nextMissions: Mission[], nextActiveMissionId: string) => {
     const workspace: StoredMissionWorkspace = {
@@ -941,6 +964,10 @@ export default function Home() {
             contactMethod: profile.contactMethod,
             contactUrl: profile.contactUrl,
             publicEmail: profile.publicEmail,
+            emailSourceUrl: profile.emailSourceUrl,
+            publicPhone: profile.publicPhone,
+            phoneSourceUrl: profile.phoneSourceUrl,
+            websiteUrl: profile.websiteUrl,
             aiGenerated: true,
           }];
         });
@@ -1018,23 +1045,25 @@ export default function Home() {
     }
   };
 
-  const enrichPublishedEmails = async () => {
-    const candidates = contacts.filter((contact) => !contact.publicEmail);
-    if (candidates.length === 0 || isEnrichingEmails) return;
-    setIsEnrichingEmails(true);
+  const enrichContactDetails = useCallback(async (targetMission: Mission, candidates: Contact[]) => {
+    if (!sessionAccessToken || candidates.length === 0 || contactEnrichmentRequestsRef.current.has(targetMission.id)) return;
+    contactEnrichmentRequestsRef.current.add(targetMission.id);
+    setIsEnrichingContacts(true);
     try {
-      const verified = new Map<number, { publicEmail: string; sourceUrl: string }>();
-      for (let offset = 0; offset < candidates.length; offset += 20) {
-        const batch = candidates.slice(offset, offset + 20);
+      const verified = new Map<number, ContactEnrichmentResponse["results"][number]>();
+      const checkedIds = new Set<number>();
+      for (let offset = 0; offset < candidates.length; offset += 10) {
+        const batch = candidates.slice(offset, offset + 10);
+        batch.forEach((contact) => checkedIds.add(contact.id));
         const response = await fetch("/api/ai/research", {
           method: "POST",
           headers: {
-            authorization: `Bearer ${session?.access_token ?? ""}`,
+            authorization: `Bearer ${sessionAccessToken}`,
             "content-type": "application/json",
           },
           body: JSON.stringify({
-            mission,
-            stage: "email_enrichment",
+            mission: targetMission,
+            stage: "contact_enrichment",
             contacts: batch.map((contact) => ({
               contactId: String(contact.id),
               name: contact.name,
@@ -1042,42 +1071,71 @@ export default function Home() {
               company: contact.company,
               sourceUrl: contact.sourceUrl ?? "",
               contactUrl: contact.contactUrl ?? "",
+              websiteUrl: contact.websiteUrl ?? "",
+              linkedinUrl: contact.linkedinUrl ?? "",
+              publicEmail: contact.publicEmail ?? "",
+              publicPhone: contact.publicPhone ?? "",
             })),
           }),
         });
-        const result = await response.json() as EmailEnrichmentResponse | { error?: string };
+        const result = await response.json() as ContactEnrichmentResponse | { error?: string };
         if (!response.ok || !("results" in result)) {
-          throw new Error("error" in result && result.error ? result.error : "Published emails could not be verified.");
+          throw new Error("error" in result && result.error ? result.error : "Public contact details could not be verified.");
         }
         result.results.forEach((item) => {
           const contactId = Number(item.contactId);
-          if (Number.isSafeInteger(contactId)) verified.set(contactId, { publicEmail: item.publicEmail, sourceUrl: item.sourceUrl });
+          if (Number.isSafeInteger(contactId)) verified.set(contactId, item);
         });
       }
 
-      if (verified.size > 0) {
-        updateMissionResearch(mission.id, (current) => ({
-          ...current,
-          contacts: current.contacts.map((contact) => {
-            const match = verified.get(contact.id);
-            return match ? { ...contact, publicEmail: match.publicEmail, emailSourceUrl: match.sourceUrl, outreach: undefined } : contact;
-          }),
-        }));
-        setSelected((current) => {
-          if (!current) return current;
-          const match = verified.get(current.id);
-          return match ? { ...current, publicEmail: match.publicEmail, emailSourceUrl: match.sourceUrl, outreach: undefined } : current;
-        });
-        notify(`${verified.size} published professional email${verified.size === 1 ? "" : "s"} verified and saved`);
-      } else {
-        notify("No additional published professional emails could be verified");
+      const checkedAt = new Date().toISOString();
+      const mergeDetails = (contact: Contact): Contact => {
+        if (!checkedIds.has(contact.id)) return contact;
+        const match = verified.get(contact.id);
+        const next = {
+          ...contact,
+          publicEmail: cleanStoredEmail(match?.publicEmail) || contact.publicEmail,
+          emailSourceUrl: cleanStoredUrl(match?.emailSourceUrl) || contact.emailSourceUrl,
+          linkedinUrl: cleanStoredUrl(match?.linkedinUrl) || contact.linkedinUrl,
+          publicPhone: cleanMissionField(match?.publicPhone, 60) || contact.publicPhone,
+          phoneSourceUrl: cleanStoredUrl(match?.phoneSourceUrl) || contact.phoneSourceUrl,
+          websiteUrl: cleanStoredUrl(match?.websiteUrl) || contact.websiteUrl,
+          contactUrl: cleanStoredUrl(match?.contactUrl) || contact.contactUrl,
+          contactMethod: cleanMissionField(match?.contactMethod, 240) || contact.contactMethod,
+          contactDetailsCheckedAt: checkedAt,
+        };
+        const outreachInputsChanged = next.publicEmail !== contact.publicEmail
+          || next.linkedinUrl !== contact.linkedinUrl
+          || next.contactUrl !== contact.contactUrl;
+        return outreachInputsChanged ? { ...next, outreach: undefined } : next;
+      };
+
+      updateMissionResearch(targetMission.id, (current) => ({
+        ...current,
+        contacts: current.contacts.map(mergeDetails),
+      }));
+      setSelected((current) => current && checkedIds.has(current.id) ? mergeDetails(current) : current);
+
+      const addedEmails = [...verified.values()].filter((item) => item.publicEmail).length;
+      const addedLinkedIn = [...verified.values()].filter((item) => item.linkedinUrl).length;
+      const addedPhones = [...verified.values()].filter((item) => item.publicPhone).length;
+      if (addedEmails || addedLinkedIn || addedPhones) {
+        notify(`Contact details saved · ${addedEmails} email${addedEmails === 1 ? "" : "s"}, ${addedLinkedIn} LinkedIn, ${addedPhones} phone${addedPhones === 1 ? "" : "s"}`);
       }
     } catch (enrichmentError) {
-      notify(enrichmentError instanceof Error ? enrichmentError.message : "Published emails could not be verified.");
+      notify(enrichmentError instanceof Error ? enrichmentError.message : "Public contact details could not be verified.");
     } finally {
-      setIsEnrichingEmails(false);
+      contactEnrichmentRequestsRef.current.delete(targetMission.id);
+      setIsEnrichingContacts(false);
     }
-  };
+  }, [notify, sessionAccessToken, setSelected, updateMissionResearch]);
+
+  useEffect(() => {
+    const pending = contacts.filter((contact) => !contact.contactDetailsCheckedAt);
+    if (!sessionAccessToken || pending.length === 0) return;
+    const timer = window.setTimeout(() => void enrichContactDetails(mission, pending), 500);
+    return () => window.clearTimeout(timer);
+  }, [contacts, enrichContactDetails, mission, sessionAccessToken]);
 
   const openContact = (contact: Contact) => {
     setSelected(contact);
@@ -1298,6 +1356,7 @@ export default function Home() {
           aiError={aiError}
           isPlanning={isPlanning}
           isDiscovering={isDiscovering}
+          isEnrichingContacts={isEnrichingContacts}
           isRefining={isRefining}
           discovered={discovered}
           strategyOpen={strategyOpen}
@@ -1324,6 +1383,7 @@ export default function Home() {
           contact={selected}
           isContacted={contacted.includes(selected.id)}
           isGenerating={generatingOutreachId === selected.id}
+          isEnrichingContacts={isEnrichingContacts && !selected.contactDetailsCheckedAt}
           linkedinConnectionLimit={userOutreachProfile.linkedinConnectionLimit}
           onClose={() => setSelected(null)}
           onCopy={copyText}
@@ -1346,8 +1406,7 @@ export default function Home() {
           mission={mission}
           contacts={contacts}
           profile={userOutreachProfile}
-          isVerifyingEmails={isEnrichingEmails}
-          onVerifyEmails={() => void enrichPublishedEmails()}
+          isEnrichingContacts={isEnrichingContacts}
           onClose={() => setShowEmailCampaign(false)}
           onNotify={notify}
         />
@@ -1400,6 +1459,7 @@ function MissionWorkspace({
   aiError,
   isPlanning,
   isDiscovering,
+  isEnrichingContacts,
   isRefining,
   discovered,
   strategyOpen,
@@ -1429,6 +1489,7 @@ function MissionWorkspace({
   aiError: string;
   isPlanning: boolean;
   isDiscovering: boolean;
+  isEnrichingContacts: boolean;
   isRefining: boolean;
   discovered: boolean;
   strategyOpen: boolean;
@@ -1501,6 +1562,7 @@ function MissionWorkspace({
           contacted={contacted}
           isOpen={candidateListOpen}
           isDiscovering={isDiscovering}
+          isEnrichingContacts={isEnrichingContacts}
           discovered={discovered}
           query={query}
           filter={filter}
@@ -1576,13 +1638,14 @@ function LivingStrategy({ plan, notes, isOpen, isRefining, onToggle, onAddNote }
   );
 }
 
-function CandidatePool({ contacts, total, emailContactCount, contacted, isOpen, isDiscovering, discovered, query, filter, onToggle, onFind, onExpand, onQuery, onFilter, onSelect, onPlanEmail }: {
+function CandidatePool({ contacts, total, emailContactCount, contacted, isOpen, isDiscovering, isEnrichingContacts, discovered, query, filter, onToggle, onFind, onExpand, onQuery, onFilter, onSelect, onPlanEmail }: {
   contacts: Contact[];
   total: number;
   emailContactCount: number;
   contacted: number[];
   isOpen: boolean;
   isDiscovering: boolean;
+  isEnrichingContacts: boolean;
   discovered: boolean;
   query: string;
   filter: string;
@@ -1600,7 +1663,7 @@ function CandidatePool({ contacts, total, emailContactCount, contacted, isOpen, 
     <section className="flow-section candidate-section">
       <button className="flow-section-header" onClick={onToggle} aria-expanded={isOpen}>
         <span className="flow-number">03</span>
-        <span className="flow-heading-copy"><span className="eyebrow">CANDIDATE POOL</span><strong>{total ? `${total} verified people` : "50–200 relevant people"}</strong><small>Grouped by sector, with LinkedIn and public contact routes when available.</small></span>
+        <span className="flow-heading-copy"><span className="eyebrow">CANDIDATE POOL</span><strong>{total ? `${total} verified people` : "50–200 relevant people"}</strong><small>Grouped by sector, with every verified public email, LinkedIn profile, website and professional phone.</small></span>
         <span className="candidate-progress"><b>{total}</b><i><span style={{ width: `${Math.min(100, (total / 200) * 100)}%` }} /></i><small>max 200</small></span>
         <span className="collapse-label">{isOpen ? "Collapse" : "Open"} <b>{isOpen ? "−" : "+"}</b></span>
       </button>
@@ -1617,7 +1680,8 @@ function CandidatePool({ contacts, total, emailContactCount, contacted, isOpen, 
               <div className="candidate-toolbar">
                 <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search name, role or company" /></label>
                 <div className="filter-row">{filters.map((item) => <button key={item} className={filter === item ? "selected" : ""} onClick={() => onFilter(item)}>{item}</button>)}</div>
-                <button className="email-plan-button" onClick={onPlanEmail}><span>@</span> {emailContactCount ? "Plan email outreach" : "Find published emails"} <b>{emailContactCount}</b></button>
+                {isEnrichingContacts && <span className="contact-enrichment-status"><i className="spinner dark" /> Verifying contact details…</span>}
+                <button className="email-plan-button" onClick={onPlanEmail}><span>@</span> Plan email outreach <b>{emailContactCount}</b></button>
               </div>
 
               {groupedContacts.length ? groupedContacts.map(([sector, sectorContacts]) => (
@@ -1629,7 +1693,13 @@ function CandidatePool({ contacts, total, emailContactCount, contacted, isOpen, 
                         <span className={`contact-avatar small ${contact.color}`}>{contact.initials}</span>
                         <span className="candidate-person"><strong>{contact.name}</strong><small>{contact.role} · {contact.company}</small></span>
                         <span className="candidate-value">{contact.reason}</span>
-                        <span className="candidate-links">{contact.linkedinUrl && <i>in</i>}{contact.publicEmail && <b>Email</b>}{contact.contactUrl && !contact.publicEmail && <b>Contact</b>}</span>
+                        <span className="candidate-links">
+                          {contact.publicEmail && <b>Email</b>}
+                          {contact.linkedinUrl && <i>in</i>}
+                          {contact.websiteUrl && <em>Web</em>}
+                          {contact.publicPhone && <strong>Phone</strong>}
+                          {contact.contactUrl && !contact.websiteUrl && <em>Contact</em>}
+                        </span>
                         <span className={`status ${contacted.includes(contact.id) ? "done" : ""}`}><i />{contacted.includes(contact.id) ? "Contacted" : "Pending"}</span>
                         <span className="row-arrow">→</span>
                       </button>
@@ -1719,13 +1789,12 @@ function proposedSendTimes(startDate: string, time: string, count: number, daily
   return times;
 }
 
-function EmailCampaignModal({ accessToken, mission, contacts, profile, isVerifyingEmails, onVerifyEmails, onClose, onNotify }: {
+function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichingContacts, onClose, onNotify }: {
   accessToken: string;
   mission: Mission;
   contacts: Contact[];
   profile: UserOutreachProfile;
-  isVerifyingEmails: boolean;
-  onVerifyEmails: () => void;
+  isEnrichingContacts: boolean;
   onClose: () => void;
   onNotify: (message: string) => void;
 }) {
@@ -1928,7 +1997,7 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isVerifyi
             ) : connection?.connected && eligible.length ? (
               <form className="email-plan-form" onSubmit={generatePlan}>
                 <div className="email-plan-section">
-                  <header><div><span className="eyebrow">1 · RECIPIENTS</span><strong>Choose published professional emails</strong></div><div className="email-recipient-actions"><button type="button" onClick={onVerifyEmails} disabled={isVerifyingEmails || eligible.length === contacts.length}>{isVerifyingEmails ? "Verifying…" : "Verify more emails"}</button><button type="button" onClick={() => setSelectedIds(selectedIds.size === eligible.length ? new Set() : new Set(eligible.map((contact) => contact.id)))}>{selectedIds.size === eligible.length ? "Clear all" : "Select all"}</button></div></header>
+                  <header><div><span className="eyebrow">1 · RECIPIENTS</span><strong>Choose published professional emails</strong></div><div className="email-recipient-actions"><button type="button" onClick={() => setSelectedIds(selectedIds.size === eligible.length ? new Set() : new Set(eligible.map((contact) => contact.id)))}>{selectedIds.size === eligible.length ? "Clear all" : "Select all"}</button></div></header>
                   <div className="email-recipient-grid">{eligible.map((contact) => <label key={contact.id} aria-label={`Include ${contact.name} in the email plan`}><input type="checkbox" checked={selectedIds.has(contact.id)} onChange={() => setSelectedIds((current) => { const next = new Set(current); if (next.has(contact.id)) next.delete(contact.id); else next.add(contact.id); return next; })} /><span><strong>{contact.name}</strong><small>{contact.publicEmail}</small></span></label>)}</div>
                 </div>
                 <div className="email-plan-section">
@@ -1937,7 +2006,7 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isVerifyi
                 </div>
                 <button className="primary-button email-generate-button" disabled={working || selectedIds.size === 0}>{working ? <><i className="spinner" /> Writing and scheduling drafts…</> : <>Generate a reviewable plan for {selectedIds.size} emails <span>→</span></>}</button>
               </form>
-            ) : eligible.length === 0 ? <div className="email-no-recipients"><strong>The source pages may publish emails that were not extracted.</strong><p>Run a focused verification across official company, university and professional pages. Existing contacts and progress remain unchanged.</p><button className="primary-button" onClick={onVerifyEmails} disabled={isVerifyingEmails}>{isVerifyingEmails ? <><i className="spinner" /> Verifying official sources…</> : <>Find published emails for this pool <span>→</span></>}</button></div> : null}
+            ) : eligible.length === 0 ? <div className="email-no-recipients"><strong>{isEnrichingContacts ? "Verifying public contact details…" : "No verified professional emails are available yet."}</strong><p>{isEnrichingContacts ? "Email, LinkedIn, website and public professional phone details are being checked automatically." : "The candidate cards still show every other verified public route. Email planning becomes available as soon as a published address is found."}</p></div> : null}
 
             {!activeCampaign && campaigns.filter((campaign) => campaign.mission_id === mission.id).length > 0 && (
               <section className="existing-campaigns"><span className="eyebrow">SAVED EMAIL PLANS</span>{campaigns.filter((campaign) => campaign.mission_id === mission.id).map((campaign) => <button key={campaign.id} onClick={() => openCampaign(campaign)}><span><strong>{campaign.name}</strong><small>{savedEmails.filter((email) => email.campaign_id === campaign.id).length} emails · {new Date(campaign.created_at).toLocaleDateString()}</small></span><b className={`campaign-status status-${campaign.status}`}>{campaign.status}</b><i>→</i></button>)}</section>
@@ -2126,7 +2195,7 @@ export function ContactsView({ contacts, total, query, filter, contacted, hasPla
                     <span className="contact-person"><strong>{contact.name}</strong><small>{contact.role} · {contact.company}</small></span>
                     <span className="type-tag">{contact.type}</span>
                     <span className="contact-reason">{contact.reason}</span>
-                    <span className="available-routes">{contact.linkedinUrl && <i>in</i>}{contact.contactUrl && <b>Contact</b>}</span>
+                    <span className="available-routes">{contact.publicEmail && <b>Email</b>}{contact.linkedinUrl && <i>in</i>}{contact.websiteUrl && <b>Web</b>}{contact.publicPhone && <b>Phone</b>}</span>
                     <span className={`status ${contacted.includes(contact.id) ? "done" : ""}`}><i />{contacted.includes(contact.id) ? "Contacted" : "Pending"}</span>
                     <span className="fit plain">{contact.fit}%</span>
                     <span className="row-arrow">→</span>
@@ -2231,7 +2300,7 @@ function ContactCard({ contact, onSelect }: { contact: Contact; onSelect: (conta
     <article className="contact-card">
       <div className="card-topline"><div className={`contact-avatar ${contact.color}`}>{contact.initials}</div><span className="fit"><i /> {contact.fit}% fit</span></div>
       <h3>{contact.name}</h3><p className="role">{contact.role} · {contact.company}</p>
-      <div className="contact-meta"><span>{contact.sector}</span>{contact.linkedinUrl && <b>LinkedIn</b>}{contact.contactUrl && <b>Public contact</b>}</div>
+      <div className="contact-meta"><span>{contact.sector}</span>{contact.publicEmail && <b>Email</b>}{contact.linkedinUrl && <b>LinkedIn</b>}{contact.websiteUrl && <b>Website</b>}{contact.publicPhone && <b>Phone</b>}</div>
       <div className="why"><span>{contact.aiGenerated ? "WHY THIS PERSON · AI + PUBLIC WEB" : "WHY NOW · EXAMPLE PROFILE"}</span><p>{contact.reason}</p></div>
       <button className="card-button" onClick={() => onSelect(contact)}>Prepare outreach <span>→</span></button>
     </article>
@@ -2292,10 +2361,11 @@ function OutreachDraftCard({ label, meta, text, onCopy }: {
   );
 }
 
-function ContactDrawer({ contact, isContacted, isGenerating, linkedinConnectionLimit, onClose, onCopy, onGenerate, onContact }: {
+function ContactDrawer({ contact, isContacted, isGenerating, isEnrichingContacts, linkedinConnectionLimit, onClose, onCopy, onGenerate, onContact }: {
   contact: Contact;
   isContacted: boolean;
   isGenerating: boolean;
+  isEnrichingContacts: boolean;
   linkedinConnectionLimit: 0 | 200 | 300;
   onClose: () => void;
   onCopy: (text: string, label: string) => void;
@@ -2308,6 +2378,9 @@ function ContactDrawer({ contact, isContacted, isGenerating, linkedinConnectionL
   const hasLinkedInConnection = Boolean(contact.linkedinUrl && outreach?.linkedinConnectionMessage && linkedinConnectionLimit > 0);
   const hasLinkedInDirect = Boolean(contact.linkedinUrl && outreach?.linkedinDirectMessage);
   const hasContactForm = Boolean(contact.contactUrl && outreach?.contactFormMessage);
+  const phoneHref = contact.publicPhone ? contact.publicPhone.replace(/[^\d+]/g, "") : "";
+  const distinctContactUrl = contact.contactUrl && contact.contactUrl !== contact.websiteUrl ? contact.contactUrl : "";
+  const shownPrimaryUrls = new Set([contact.linkedinUrl, contact.websiteUrl, distinctContactUrl].filter(Boolean));
   return (
     <div className="drawer-layer" role="dialog" aria-modal="true" aria-label={`Prepare outreach to ${contact.name}`}>
       <button className="drawer-backdrop" onClick={onClose} aria-label="Close" />
@@ -2315,11 +2388,15 @@ function ContactDrawer({ contact, isContacted, isGenerating, linkedinConnectionL
         <button className="close-button" onClick={onClose} aria-label="Close panel">×</button>
         <div className="drawer-profile"><span className={`contact-avatar large ${contact.color}`}>{contact.initials}</span><div><span className="fit"><i /> {contact.fit}% fit</span><h2>{contact.name}</h2><p>{contact.role} · {contact.company}</p><small>{contact.sector}</small></div></div>
         <div className="contact-routes">
-          {contact.linkedinUrl && <a href={contact.linkedinUrl} target="_blank" rel="noreferrer"><span>in</span><div><strong>LinkedIn profile</strong><small>Open verified public profile</small></div><b>↗</b></a>}
           {contact.publicEmail && <a href={`mailto:${contact.publicEmail}`}><span>@</span><div><strong>{contact.publicEmail}</strong><small>Published professional email</small></div><b>↗</b></a>}
-          {contact.emailSourceUrl && contact.emailSourceUrl !== contact.sourceUrl && contact.emailSourceUrl !== contact.contactUrl && <a href={contact.emailSourceUrl} target="_blank" rel="noreferrer"><span>✓</span><div><strong>Email verification source</strong><small>Official page publishing this address</small></div><b>↗</b></a>}
-          {contact.contactUrl && <a href={contact.contactUrl} target="_blank" rel="noreferrer"><span>✉</span><div><strong>Public contact route</strong><small>{contact.contactMethod || "Official professional contact page"}</small></div><b>↗</b></a>}
-          {contact.sourceUrl && contact.sourceUrl !== contact.linkedinUrl && <a href={contact.sourceUrl} target="_blank" rel="noreferrer"><span>✓</span><div><strong>Verification source</strong><small>Confirm role and professional relevance</small></div><b>↗</b></a>}
+          {contact.linkedinUrl && <a href={contact.linkedinUrl} target="_blank" rel="noreferrer"><span>in</span><div><strong>LinkedIn profile</strong><small>Direct verified public profile</small></div><b>↗</b></a>}
+          {contact.publicPhone && <a href={`tel:${phoneHref}`}><span>☎</span><div><strong>{contact.publicPhone}</strong><small>Published office or business phone</small></div><b>↗</b></a>}
+          {contact.websiteUrl && <a href={contact.websiteUrl} target="_blank" rel="noreferrer"><span>↗</span><div><strong>Professional website</strong><small>Official faculty, lab, personal or company page</small></div><b>↗</b></a>}
+          {distinctContactUrl && <a href={distinctContactUrl} target="_blank" rel="noreferrer"><span>✉</span><div><strong>Public contact page</strong><small>{contact.contactMethod || "Official professional contact route"}</small></div><b>↗</b></a>}
+          {contact.emailSourceUrl && !shownPrimaryUrls.has(contact.emailSourceUrl) && contact.emailSourceUrl !== contact.sourceUrl && <a href={contact.emailSourceUrl} target="_blank" rel="noreferrer"><span>✓</span><div><strong>Email source</strong><small>Official page publishing this address</small></div><b>↗</b></a>}
+          {contact.phoneSourceUrl && !shownPrimaryUrls.has(contact.phoneSourceUrl) && contact.phoneSourceUrl !== contact.emailSourceUrl && contact.phoneSourceUrl !== contact.sourceUrl && <a href={contact.phoneSourceUrl} target="_blank" rel="noreferrer"><span>✓</span><div><strong>Phone source</strong><small>Official page publishing this number</small></div><b>↗</b></a>}
+          {contact.sourceUrl && !shownPrimaryUrls.has(contact.sourceUrl) && <a href={contact.sourceUrl} target="_blank" rel="noreferrer"><span>✓</span><div><strong>Professional source</strong><small>Confirm role and professional relevance</small></div><b>↗</b></a>}
+          {isEnrichingContacts && <div className="contact-route-loading"><i className="spinner dark" /><div><strong>Finding public contact details</strong><small>Checking email, LinkedIn, website and professional phone together…</small></div></div>}
         </div>
         <section className="drawer-section"><span className="eyebrow">HOW TO REACH THEM RESPONSIBLY</span><p>{contact.warm}</p></section>
         <section className="drawer-section"><span className="eyebrow">CONVERSATION ANGLE</span><p>{contact.angle}</p></section>
