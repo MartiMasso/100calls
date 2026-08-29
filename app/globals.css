@@ -475,7 +475,9 @@ h1 { max-width: 810px; margin: 8px 0 34px; font-size: clamp(40px, 5vw, 66px); li
 .mission-flow { max-width: 1380px; margin: 0 auto; padding-top: 68px; }
 .objective-panel { display: grid; grid-template-columns: 54px minmax(0, 1fr) auto; align-items: start; gap: 22px; border-top: 1.5px solid var(--ink); border-bottom: 1px solid var(--line); background: rgba(255,255,255,.34); padding: 25px 0 28px; }
 .flow-number { color: var(--orange); font-size: 13px; font-weight: 900; letter-spacing: .1em; }
-.objective-copy h1 { max-width: 920px; margin: 7px 0 14px; font-size: clamp(31px, 4vw, 50px); line-height: 1.02; }
+.objective-copy h1 { max-width: 1040px; margin: 7px 0 14px; font-size: clamp(30px, 3.35vw, 44px); font-weight: 650; line-height: 1.04; overflow-wrap: anywhere; text-wrap: balance; }
+.objective-copy h1.long { font-size: clamp(28px, 2.9vw, 38px); line-height: 1.07; }
+.objective-copy h1.very-long { font-size: clamp(25px, 2.5vw, 33px); line-height: 1.1; }
 .objective-copy p { display: inline; margin: 0 24px 0 0; color: var(--muted); font-size: 12px; line-height: 1.55; }
 .objective-copy p strong { color: var(--ink); }
 .edit-objective { min-height: 43px; display: inline-flex; align-items: center; gap: 8px; border: 1.5px solid var(--ink); background: transparent; color: var(--ink); padding: 0 15px; font-size: 11px; font-weight: 900; }
@@ -605,7 +607,8 @@ h1 { max-width: 810px; margin: 8px 0 34px; font-size: clamp(40px, 5vw, 66px); li
 @media (max-width: 620px) {
   .workspace { padding-top: 72px; }
   .objective-panel { gap: 12px; padding-top: 18px; }
-  .objective-copy h1 { font-size: 32px; }
+  .objective-copy h1, .objective-copy h1.long { font-size: 30px; }
+  .objective-copy h1.very-long { font-size: 27px; }
   .objective-copy p { display: block; margin: 6px 0 0; }
   .flow-empty { grid-template-columns: 38px 1fr; padding: 24px 16px 24px 0; }
   .flow-empty .primary-button { grid-column: 2; justify-self: start; margin: 0; }

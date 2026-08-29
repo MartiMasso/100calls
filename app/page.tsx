@@ -776,7 +776,7 @@ function MissionWorkspace({
         <div className="flow-number">01</div>
         <div className="objective-copy">
           <span className="eyebrow">OBJECTIVE</span>
-          <h1>{mission.title}</h1>
+          <h1 className={`objective-title ${mission.title.length > 220 ? "very-long" : mission.title.length > 130 ? "long" : ""}`}>{mission.title}</h1>
           <p><strong>People:</strong> {mission.audience}</p>
           <p><strong>What to learn:</strong> {mission.question}</p>
         </div>
