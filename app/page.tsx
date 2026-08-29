@@ -113,6 +113,37 @@ type OutreachResponse = {
   outreach: OutreachDrafts;
 };
 
+type EmailBatchResponse = {
+  stage: "email_batch";
+  model: string;
+  drafts: Array<{ contactId: string; subject: string; body: string }>;
+};
+
+type GmailConnection = { connected: boolean; email: string; connectedAt: string };
+type EmailCampaign = {
+  id: string;
+  mission_id: string;
+  name: string;
+  status: "draft" | "approved" | "paused" | "completed" | "cancelled";
+  timezone: string;
+  daily_limit: number;
+  approved_at: string | null;
+  created_at: string;
+};
+type ScheduledEmail = {
+  id: string;
+  campaign_id: string;
+  contact_id: string;
+  recipient_email: string;
+  recipient_name: string;
+  subject: string;
+  body: string;
+  scheduled_at: string;
+  status: "draft" | "queued" | "sending" | "sent" | "failed" | "cancelled";
+  last_error: string | null;
+  sent_at: string | null;
+};
+
 type MissionResearch = {
   contacts: Contact[];
   plan: ActionPlan | null;
@@ -447,6 +478,7 @@ export default function Home() {
   );
   const [showAccount, setShowAccount] = useState(false);
   const [showOutreachSettings, setShowOutreachSettings] = useState(false);
+  const [showEmailCampaign, setShowEmailCampaign] = useState(false);
   const [userOutreachProfile, setUserOutreachProfile] = useState<UserOutreachProfile>(defaultOutreachProfile);
   const [generatingOutreachId, setGeneratingOutreachId] = useState<number | null>(null);
   const accountMenuRef = useRef<HTMLDivElement>(null);
@@ -657,6 +689,24 @@ export default function Home() {
       window.removeEventListener("keydown", closeOnEscape);
     };
   }, [showAccount]);
+
+  useEffect(() => {
+    const gmailResult = new URLSearchParams(window.location.search).get("gmail");
+    if (!gmailResult) return;
+    window.history.replaceState({}, "", window.location.pathname);
+    const openTimer = window.setTimeout(() => {
+      if (gmailResult === "connected") {
+        setShowEmailCampaign(true);
+        setToast("Gmail connected · review your email plan before authorizing anything");
+      } else if (gmailResult === "denied") {
+        setToast("Gmail connection was cancelled · no access was granted");
+      } else {
+        setToast("Gmail could not be connected. Check the OAuth callback and server configuration");
+      }
+    }, 0);
+    const closeTimer = window.setTimeout(() => setToast(""), 4200);
+    return () => { window.clearTimeout(openTimer); window.clearTimeout(closeTimer); };
+  }, []);
 
   const mission = useMemo(
     () => missions.find((item) => item.id === activeMissionId) ?? missions[0] ?? starterMission,
@@ -1171,6 +1221,7 @@ export default function Home() {
           plan={plan}
           contacts={filteredContacts}
           totalContacts={contacts.length}
+          emailContactCount={contacts.filter((contact) => contact.publicEmail).length}
           contacted={contacted}
           strategyNotes={strategyNotes}
           aiError={aiError}
@@ -1193,6 +1244,7 @@ export default function Home() {
           onQuery={setQuery}
           onFilter={setFilter}
           onSelect={openContact}
+          onPlanEmail={() => setShowEmailCampaign(true)}
         />
       </section>
 
@@ -1214,6 +1266,17 @@ export default function Home() {
           profile={userOutreachProfile}
           onClose={() => setShowOutreachSettings(false)}
           onSave={saveOutreachSettings}
+        />
+      )}
+
+      {showEmailCampaign && (
+        <EmailCampaignModal
+          accessToken={session.access_token}
+          mission={mission}
+          contacts={contacts}
+          profile={userOutreachProfile}
+          onClose={() => setShowEmailCampaign(false)}
+          onNotify={notify}
         />
       )}
 
@@ -1258,6 +1321,7 @@ function MissionWorkspace({
   plan,
   contacts,
   totalContacts,
+  emailContactCount,
   contacted,
   strategyNotes,
   aiError,
@@ -1280,11 +1344,13 @@ function MissionWorkspace({
   onQuery,
   onFilter,
   onSelect,
+  onPlanEmail,
 }: {
   mission: Mission;
   plan: ActionPlan | null;
   contacts: Contact[];
   totalContacts: number;
+  emailContactCount: number;
   contacted: number[];
   strategyNotes: StrategyNote[];
   aiError: string;
@@ -1307,6 +1373,7 @@ function MissionWorkspace({
   onQuery: (value: string) => void;
   onFilter: (value: string) => void;
   onSelect: (contact: Contact) => void;
+  onPlanEmail: () => void;
 }) {
   return (
     <div className="mission-flow">
@@ -1357,6 +1424,7 @@ function MissionWorkspace({
         <CandidatePool
           contacts={contacts}
           total={totalContacts}
+          emailContactCount={emailContactCount}
           contacted={contacted}
           isOpen={candidateListOpen}
           isDiscovering={isDiscovering}
@@ -1369,6 +1437,7 @@ function MissionWorkspace({
           onQuery={onQuery}
           onFilter={onFilter}
           onSelect={onSelect}
+          onPlanEmail={onPlanEmail}
         />
       )}
     </div>
@@ -1434,9 +1503,10 @@ function LivingStrategy({ plan, notes, isOpen, isRefining, onToggle, onAddNote }
   );
 }
 
-function CandidatePool({ contacts, total, contacted, isOpen, isDiscovering, discovered, query, filter, onToggle, onFind, onExpand, onQuery, onFilter, onSelect }: {
+function CandidatePool({ contacts, total, emailContactCount, contacted, isOpen, isDiscovering, discovered, query, filter, onToggle, onFind, onExpand, onQuery, onFilter, onSelect, onPlanEmail }: {
   contacts: Contact[];
   total: number;
+  emailContactCount: number;
   contacted: number[];
   isOpen: boolean;
   isDiscovering: boolean;
@@ -1449,6 +1519,7 @@ function CandidatePool({ contacts, total, contacted, isOpen, isDiscovering, disc
   onQuery: (value: string) => void;
   onFilter: (value: string) => void;
   onSelect: (contact: Contact) => void;
+  onPlanEmail: () => void;
 }) {
   const filters = ["All", "Potential customer", "Founder", "Expert"];
   const groupedContacts = groupContactsBySector(contacts);
@@ -1473,6 +1544,7 @@ function CandidatePool({ contacts, total, contacted, isOpen, isDiscovering, disc
               <div className="candidate-toolbar">
                 <label className="search-box"><span>⌕</span><input value={query} onChange={(event) => onQuery(event.target.value)} placeholder="Search name, role or company" /></label>
                 <div className="filter-row">{filters.map((item) => <button key={item} className={filter === item ? "selected" : ""} onClick={() => onFilter(item)}>{item}</button>)}</div>
+                <button className="email-plan-button" onClick={onPlanEmail} disabled={emailContactCount === 0}><span>@</span> Plan email outreach <b>{emailContactCount}</b></button>
               </div>
 
               {groupedContacts.length ? groupedContacts.map(([sector, sectorContacts]) => (
@@ -1484,7 +1556,7 @@ function CandidatePool({ contacts, total, contacted, isOpen, isDiscovering, disc
                         <span className={`contact-avatar small ${contact.color}`}>{contact.initials}</span>
                         <span className="candidate-person"><strong>{contact.name}</strong><small>{contact.role} · {contact.company}</small></span>
                         <span className="candidate-value">{contact.reason}</span>
-                        <span className="candidate-links">{contact.linkedinUrl && <i>in</i>}{contact.contactUrl && <b>Contact</b>}</span>
+                        <span className="candidate-links">{contact.linkedinUrl && <i>in</i>}{contact.publicEmail && <b>Email</b>}{contact.contactUrl && !contact.publicEmail && <b>Contact</b>}</span>
                         <span className={`status ${contacted.includes(contact.id) ? "done" : ""}`}><i />{contacted.includes(contact.id) ? "Contacted" : "Pending"}</span>
                         <span className="row-arrow">→</span>
                       </button>
@@ -1548,6 +1620,249 @@ function ExpansionModal({ currentCount, onClose, onExpand }: {
         <label>Extra instruction<textarea name="instructions" maxLength={700} rows={4} placeholder="Example: add European robotics researchers and industrial fleet operators…" /></label>
         <div className="modal-actions"><button type="button" className="secondary-button" onClick={onClose}>Cancel</button><button className="primary-button">Find more people <span>→</span></button></div>
       </form>
+    </div>
+  );
+}
+
+function tomorrowInputValue(): string {
+  const date = new Date();
+  date.setDate(date.getDate() + 1);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+function proposedSendTimes(startDate: string, time: string, count: number, dailyLimit: number, skipWeekends: boolean): string[] {
+  const [year, month, day] = startDate.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const cursor = new Date(year, month - 1, day, hour, minute, 0, 0);
+  const times: string[] = [];
+  while (times.length < count) {
+    if (!skipWeekends || (cursor.getDay() !== 0 && cursor.getDay() !== 6)) {
+      for (let index = 0; index < dailyLimit && times.length < count; index += 1) {
+        times.push(new Date(cursor.getTime() + index * 12 * 60 * 1000).toISOString());
+      }
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  return times;
+}
+
+function EmailCampaignModal({ accessToken, mission, contacts, profile, onClose, onNotify }: {
+  accessToken: string;
+  mission: Mission;
+  contacts: Contact[];
+  profile: UserOutreachProfile;
+  onClose: () => void;
+  onNotify: (message: string) => void;
+}) {
+  const eligible = useMemo(() => contacts.filter((contact) => Boolean(contact.publicEmail)), [contacts]);
+  const [selectedIds, setSelectedIds] = useState<Set<number>>(() => new Set(eligible.map((contact) => contact.id)));
+  const [connection, setConnection] = useState<GmailConnection | null>(null);
+  const [campaigns, setCampaigns] = useState<EmailCampaign[]>([]);
+  const [savedEmails, setSavedEmails] = useState<ScheduledEmail[]>([]);
+  const [activeCampaign, setActiveCampaign] = useState<EmailCampaign | null>(null);
+  const [activeEmails, setActiveEmails] = useState<ScheduledEmail[]>([]);
+  const [startDate, setStartDate] = useState(tomorrowInputValue);
+  const [sendTime, setSendTime] = useState("09:30");
+  const [dailyLimit, setDailyLimit] = useState(10);
+  const [skipWeekends, setSkipWeekends] = useState(true);
+  const [loading, setLoading] = useState(true);
+  const [working, setWorking] = useState(false);
+  const [error, setError] = useState("");
+  const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Madrid";
+
+  const loadCampaigns = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const response = await fetch("/api/email/campaigns", { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" });
+      const result = await response.json() as { connection?: GmailConnection; campaigns?: EmailCampaign[]; emails?: ScheduledEmail[]; error?: string };
+      if (!response.ok) throw new Error(result.error || "Email scheduling could not be loaded.");
+      setConnection(result.connection ?? { connected: false, email: "", connectedAt: "" });
+      setCampaigns(result.campaigns ?? []);
+      setSavedEmails(result.emails ?? []);
+    } catch (loadError) {
+      setError(loadError instanceof Error ? loadError.message : "Email scheduling could not be loaded.");
+    } finally {
+      setLoading(false);
+    }
+  }, [accessToken]);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => { void loadCampaigns(); }, 0);
+    return () => window.clearTimeout(timer);
+  }, [loadCampaigns]);
+
+  const connectGmail = async () => {
+    setWorking(true);
+    setError("");
+    try {
+      const response = await fetch("/api/auth/gmail/connect", { method: "POST", headers: { authorization: `Bearer ${accessToken}` } });
+      const result = await response.json() as { url?: string; error?: string };
+      if (!response.ok || !result.url) throw new Error(result.error || "Gmail connection could not start.");
+      window.location.assign(result.url);
+    } catch (connectError) {
+      setError(connectError instanceof Error ? connectError.message : "Gmail connection could not start.");
+      setWorking(false);
+    }
+  };
+
+  const campaignAction = async (action: "approve" | "pause" | "resume" | "cancel" | "disconnect", campaignId?: string) => {
+    setWorking(true);
+    setError("");
+    try {
+      const response = await fetch("/api/email/campaigns", {
+        method: "POST",
+        headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+        body: JSON.stringify({ action, campaignId }),
+      });
+      const result = await response.json() as { error?: string };
+      if (!response.ok) throw new Error(result.error || "The email plan could not be updated.");
+      if (action === "approve") onNotify("Email plan authorized · the queue will send at the approved times");
+      if (action === "disconnect") onNotify("Gmail disconnected · active campaigns were paused automatically");
+      setActiveCampaign(null);
+      setActiveEmails([]);
+      await loadCampaigns();
+    } catch (actionError) {
+      setError(actionError instanceof Error ? actionError.message : "The email plan could not be updated.");
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const generatePlan = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const selected = eligible.filter((contact) => selectedIds.has(contact.id));
+    if (!connection?.connected) return;
+    if (selected.length === 0) {
+      setError("Select at least one contact with a published professional email.");
+      return;
+    }
+    setWorking(true);
+    setError("");
+    try {
+      const drafts: EmailBatchResponse["drafts"] = [];
+      for (let offset = 0; offset < selected.length; offset += 20) {
+        const batch = selected.slice(offset, offset + 20);
+        const response = await fetch("/api/ai/research", {
+          method: "POST",
+          headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+          body: JSON.stringify({
+            mission,
+            stage: "email_batch",
+            outreachProfile: profile,
+            contacts: batch.map((contact) => ({
+              contactId: String(contact.id),
+              name: contact.name,
+              role: contact.role,
+              company: contact.company,
+              sector: contact.sector,
+              reason: contact.reason,
+              angle: contact.angle,
+              publicEmail: contact.publicEmail,
+            })),
+          }),
+        });
+        const result = await response.json() as EmailBatchResponse | { error?: string };
+        if (!response.ok || !("drafts" in result)) throw new Error("error" in result && result.error ? result.error : "The email proposal could not be generated.");
+        drafts.push(...result.drafts);
+      }
+      const draftMap = new Map(drafts.map((draft) => [draft.contactId, draft]));
+      const times = proposedSendTimes(startDate, sendTime, selected.length, dailyLimit, skipWeekends);
+      const proposedEmails = selected.map((contact, index) => {
+        const draft = draftMap.get(String(contact.id));
+        if (!draft) throw new Error(`A draft is missing for ${contact.name}.`);
+        return {
+          contactId: String(contact.id),
+          recipientEmail: contact.publicEmail,
+          recipientName: contact.name,
+          subject: draft.subject,
+          body: draft.body,
+          scheduledAt: times[index],
+        };
+      });
+      const response = await fetch("/api/email/campaigns", {
+        method: "POST",
+        headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
+        body: JSON.stringify({
+          action: "create_draft",
+          missionId: mission.id,
+          name: `${mission.title.slice(0, 110)} · ${new Date().toLocaleDateString()}`,
+          timezone,
+          dailyLimit,
+          emails: proposedEmails,
+        }),
+      });
+      const result = await response.json() as { campaign?: EmailCampaign; emails?: ScheduledEmail[]; error?: string };
+      if (!response.ok || !result.campaign) throw new Error(result.error || "The draft email plan could not be saved.");
+      setActiveCampaign(result.campaign);
+      setActiveEmails(result.emails ?? []);
+      onNotify("Draft email plan ready · nothing has been sent or authorized yet");
+    } catch (generateError) {
+      setError(generateError instanceof Error ? generateError.message : "The email proposal could not be generated.");
+    } finally {
+      setWorking(false);
+    }
+  };
+
+  const openCampaign = (campaign: EmailCampaign) => {
+    setActiveCampaign(campaign);
+    setActiveEmails(savedEmails.filter((email) => email.campaign_id === campaign.id));
+  };
+
+  return (
+    <div className="modal-layer email-campaign-layer" role="dialog" aria-modal="true" aria-labelledby="email-plan-title">
+      <button className="modal-backdrop" onClick={onClose} aria-label="Close" />
+      <section className="mission-modal email-campaign-modal">
+        <button type="button" className="close-button" onClick={onClose} aria-label="Close modal">×</button>
+        <span className="step-label">APPROVED EMAIL OUTREACH</span>
+        <h2 id="email-plan-title">Plan first. Authorize once. Send on schedule.</h2>
+        <p className="modal-intro">100 Calls can prepare personalized emails, but Gmail sends nothing until you review the complete plan and authorize it explicitly.</p>
+
+        {loading ? <div className="email-loading"><i className="spinner dark" /> Loading Gmail and campaign status…</div> : (
+          <>
+            {error && <div className="workspace-error email-error"><span>!</span><p>{error}</p></div>}
+            <div className={`gmail-connection ${connection?.connected ? "connected" : ""}`}>
+              <div><span>{connection?.connected ? "✓" : "@"}</span><p><strong>{connection?.connected ? "Gmail connected" : "Connect the Gmail account that will send"}</strong><small>{connection?.connected ? connection.email : "Send-only access. 100 Calls cannot read your inbox."}</small></p></div>
+              {connection?.connected ? <button onClick={() => void campaignAction("disconnect")} disabled={working}>Disconnect</button> : <button className="primary-button" onClick={connectGmail} disabled={working}>{working ? "Opening Google…" : "Connect Gmail"}<span>→</span></button>}
+            </div>
+
+            {activeCampaign ? (
+              <div className="campaign-review">
+                <div className="campaign-review-heading"><button onClick={() => { setActiveCampaign(null); setActiveEmails([]); }}>← Back</button><span className={`campaign-status status-${activeCampaign.status}`}>{activeCampaign.status}</span></div>
+                <h3>{activeCampaign.name}</h3>
+                <p>{activeEmails.length} emails · {activeCampaign.daily_limit} per day · times shown in {activeCampaign.timezone}</p>
+                <div className="scheduled-email-list">
+                  {activeEmails.map((email) => (
+                    <details key={email.id} className="scheduled-email">
+                      <summary><span><strong>{email.recipient_name}</strong><small>{email.recipient_email}</small></span><span><b>{new Date(email.scheduled_at).toLocaleString()}</b><small>{email.status}</small></span></summary>
+                      <div><strong>{email.subject}</strong><p>{email.body}</p>{email.last_error && <small className="email-delivery-error">{email.last_error}</small>}</div>
+                    </details>
+                  ))}
+                </div>
+                {activeCampaign.status === "draft" && <div className="authorization-box"><p><strong>Final authorization</strong>By continuing, you authorize 100 Calls to send these {activeEmails.length} emails from {connection?.email} at the listed times. You can cancel the campaign before an email is sent.</p><button className="primary-button" onClick={() => void campaignAction("approve", activeCampaign.id)} disabled={working}>{working ? "Authorizing…" : `Authorize and schedule ${activeEmails.length} emails`} <span>→</span></button></div>}
+                {activeCampaign.status === "approved" && <div className="campaign-controls"><button onClick={() => void campaignAction("pause", activeCampaign.id)} disabled={working}>Pause campaign</button><button onClick={() => void campaignAction("cancel", activeCampaign.id)} disabled={working}>Cancel unsent emails</button></div>}
+                {activeCampaign.status === "paused" && <div className="campaign-controls"><button className="primary-button" onClick={() => void campaignAction("resume", activeCampaign.id)} disabled={working}>Resume campaign <span>→</span></button><button onClick={() => void campaignAction("cancel", activeCampaign.id)} disabled={working}>Cancel unsent emails</button></div>}
+              </div>
+            ) : connection?.connected && eligible.length ? (
+              <form className="email-plan-form" onSubmit={generatePlan}>
+                <div className="email-plan-section">
+                  <header><div><span className="eyebrow">1 · RECIPIENTS</span><strong>Choose published professional emails</strong></div><button type="button" onClick={() => setSelectedIds(selectedIds.size === eligible.length ? new Set() : new Set(eligible.map((contact) => contact.id)))}>{selectedIds.size === eligible.length ? "Clear all" : "Select all"}</button></header>
+                  <div className="email-recipient-grid">{eligible.map((contact) => <label key={contact.id} aria-label={`Include ${contact.name} in the email plan`}><input type="checkbox" checked={selectedIds.has(contact.id)} onChange={() => setSelectedIds((current) => { const next = new Set(current); if (next.has(contact.id)) next.delete(contact.id); else next.add(contact.id); return next; })} /><span><strong>{contact.name}</strong><small>{contact.publicEmail}</small></span></label>)}</div>
+                </div>
+                <div className="email-plan-section">
+                  <header><div><span className="eyebrow">2 · CADENCE</span><strong>Set the proposed sending window</strong></div></header>
+                  <div className="email-cadence-grid"><label>Start date<input type="date" min={tomorrowInputValue()} value={startDate} onChange={(event) => setStartDate(event.target.value)} required /></label><label>First email each day<input type="time" value={sendTime} onChange={(event) => setSendTime(event.target.value)} required /></label><label>Emails per day<input type="number" min="1" max="50" value={dailyLimit} onChange={(event) => setDailyLimit(Math.min(50, Math.max(1, Number(event.target.value))))} required /></label><label className="weekend-toggle"><input type="checkbox" checked={skipWeekends} onChange={(event) => setSkipWeekends(event.target.checked)} /> Skip weekends</label></div>
+                </div>
+                <button className="primary-button email-generate-button" disabled={working || selectedIds.size === 0}>{working ? <><i className="spinner" /> Writing and scheduling drafts…</> : <>Generate a reviewable plan for {selectedIds.size} emails <span>→</span></>}</button>
+              </form>
+            ) : connection?.connected ? <div className="email-no-recipients"><strong>No published email addresses in this mission yet.</strong><p>Expand the candidate pool or use LinkedIn/public contact routes for the current profiles.</p></div> : null}
+
+            {!activeCampaign && campaigns.filter((campaign) => campaign.mission_id === mission.id).length > 0 && (
+              <section className="existing-campaigns"><span className="eyebrow">SAVED EMAIL PLANS</span>{campaigns.filter((campaign) => campaign.mission_id === mission.id).map((campaign) => <button key={campaign.id} onClick={() => openCampaign(campaign)}><span><strong>{campaign.name}</strong><small>{savedEmails.filter((email) => email.campaign_id === campaign.id).length} emails · {new Date(campaign.created_at).toLocaleDateString()}</small></span><b className={`campaign-status status-${campaign.status}`}>{campaign.status}</b><i>→</i></button>)}</section>
+            )}
+          </>
+        )}
+      </section>
     </div>
   );
 }

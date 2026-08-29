@@ -12,13 +12,10 @@ and turn conversations into market-validation evidence.
 - Google sign-in through Supabase OAuth (after enabling the provider)
 - GPT-powered public-web research for grounded strategic contacts
 - Source links, fit ranking, conversation angles, and personalized outreach
+- Mission strategy, contacts, learnings, and follow-up state persisted in Supabase
+- Reviewable Gmail campaigns with explicit authorization, pause, and cancellation
 - Per-user request limits and server-side API-key protection
 - Deployments through OpenAI Sites or Vercel
-
-Before the first GPT research run, the radar displays demonstration contacts.
-Generated research and product records currently live in local React state and
-are not yet saved to Supabase. The next backend step is to create user-owned
-tables with Row Level Security policies based on `auth.uid()`.
 
 ## Local setup
 
@@ -70,6 +67,11 @@ NEXT_PUBLIC_SUPABASE_URL=https://aavkaczgsjdnkufhdpie.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=<your public anon key>
 OPENAI_API_KEY=<your server-only OpenAI API key>
 OPENAI_MODEL=gpt-5.6-luna
+SUPABASE_SERVICE_ROLE_KEY=<your server-only Supabase service-role key>
+GOOGLE_GMAIL_CLIENT_ID=<dedicated Gmail OAuth client ID>
+GOOGLE_GMAIL_CLIENT_SECRET=<dedicated Gmail OAuth client secret>
+GOOGLE_GMAIL_REDIRECT_URI=https://100calls.co/api/auth/gmail/callback
+EMAIL_SCHEDULER_SECRET=<a long random server-only value>
 ```
 
 Set `OPENAI_API_KEY` as a **Secret**. Never prefix it with `NEXT_PUBLIC_`.
@@ -77,6 +79,24 @@ Set `OPENAI_API_KEY` as a **Secret**. Never prefix it with `NEXT_PUBLIC_`.
 
 Vercel will run `npm run build:vercel`. For local Vercel-compatible development,
 use `npm run dev:vercel`.
+
+## Gmail campaigns
+
+Gmail sending uses a separate Google OAuth client from Supabase sign-in. Its
+authorized redirect URIs must exactly include:
+
+- `https://100calls.co/api/auth/gmail/callback`
+- `http://localhost:3000/api/auth/gmail/callback`
+
+Only `gmail.send` is requested; the application cannot read the inbox. Refresh
+tokens are encrypted before storage. Active campaigns are automatically paused
+when Gmail is disconnected.
+
+Run `supabase/migrations/20260829190000_create_gmail_campaigns.sql` in the
+Supabase SQL Editor before testing the connection. After the application is
+deployed, set the same random `EMAIL_SCHEDULER_SECRET` in Vercel and in
+`supabase/email_scheduler_setup.sql`, then run that second file in the SQL
+Editor to process approved emails once per minute.
 
 ## Other commands
 

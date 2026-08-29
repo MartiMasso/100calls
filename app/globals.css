@@ -607,6 +607,11 @@ h1 { max-width: 810px; margin: 8px 0 34px; font-size: clamp(40px, 5vw, 66px); li
 .candidate-empty p { max-width: 650px; margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.5; }
 .candidate-toolbar { display: flex; align-items: center; gap: 14px; border-bottom: 1px solid var(--line); padding: 18px 26px; }
 .candidate-toolbar .filter-row { flex: 0 0 auto; margin: 0; }
+.email-plan-button { min-height: 36px; display: flex; align-items: center; gap: 7px; margin-left: auto; border: 1px solid var(--ink); background: var(--ink); color: white; padding: 0 12px; font-size: 9px; font-weight: 900; white-space: nowrap; }
+.email-plan-button:hover { border-color: var(--orange); background: var(--orange); }
+.email-plan-button:disabled { cursor: not-allowed; opacity: .38; }
+.email-plan-button span { color: var(--acid); font-size: 13px; }
+.email-plan-button b { display: grid; place-items: center; min-width: 19px; height: 19px; border-radius: 20px; background: var(--acid); color: var(--ink); padding: 0 5px; font-size: 8px; }
 .candidate-sector { padding: 23px 26px 0; }
 .candidate-sector > header { display: flex; align-items: center; gap: 10px; padding-bottom: 9px; border-bottom: 1.5px solid var(--ink); }
 .candidate-sector > header h3 { margin: 0; font-size: 17px; letter-spacing: -.025em; }
@@ -629,6 +634,81 @@ h1 { max-width: 810px; margin: 8px 0 34px; font-size: clamp(40px, 5vw, 66px); li
 .small-modal { width: min(620px, 100%); }
 .small-modal h2 { margin-bottom: 12px; }
 .modal-intro { margin: 0 0 24px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.email-campaign-layer { align-items: start; padding-block: 34px; }
+.email-campaign-modal { width: min(1040px, 100%); padding: clamp(26px, 4vw, 46px); }
+.email-campaign-modal > h2 { max-width: 760px; margin-bottom: 12px; }
+.email-loading { display: flex; align-items: center; gap: 12px; min-height: 110px; border: 1px solid var(--line); background: white; padding: 28px; color: var(--muted); font-size: 12px; }
+.email-error { margin: 0 0 16px; }
+.gmail-connection { display: flex; align-items: center; justify-content: space-between; gap: 20px; border: 1.5px solid var(--ink); background: white; padding: 15px 18px; }
+.gmail-connection.connected { border-color: #8aa34c; background: #f4f8df; }
+.gmail-connection > div { display: flex; align-items: center; gap: 12px; }
+.gmail-connection > div > span { display: grid; place-items: center; width: 34px; height: 34px; border-radius: 50%; background: var(--acid); color: var(--ink); font-weight: 900; }
+.gmail-connection p { display: grid; gap: 3px; margin: 0; }
+.gmail-connection p strong { font-size: 12px; }
+.gmail-connection p small { color: var(--muted); font-size: 9px; }
+.gmail-connection > button:not(.primary-button) { border: 0; border-bottom: 1px solid var(--ink); background: transparent; color: var(--ink); padding: 3px 0; font-size: 9px; font-weight: 900; }
+.email-plan-form { margin-top: 20px; }
+.email-plan-section { border: 1px solid var(--line); background: white; padding: 18px; }
+.email-plan-section + .email-plan-section { border-top: 0; }
+.email-plan-section > header { display: flex; align-items: end; justify-content: space-between; gap: 16px; margin-bottom: 15px; }
+.email-plan-section > header > div { display: grid; gap: 6px; }
+.email-plan-section > header strong { font-size: 15px; }
+.email-plan-section > header > button { border: 0; border-bottom: 1px solid var(--ink); background: transparent; padding: 2px 0; font-size: 9px; font-weight: 900; }
+.email-recipient-grid { max-height: 260px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; overflow-y: auto; }
+.email-recipient-grid label { display: flex; align-items: center; gap: 10px; margin: 0; border: 1px solid var(--line); padding: 10px; cursor: pointer; }
+.email-recipient-grid label:has(input:checked) { border-color: var(--ink); background: #f5f9df; }
+.email-recipient-grid input { width: auto; margin: 0; accent-color: var(--ink); }
+.email-recipient-grid span { min-width: 0; display: grid; gap: 3px; }
+.email-recipient-grid strong, .email-recipient-grid small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.email-recipient-grid strong { color: var(--ink); font-size: 10px; }
+.email-recipient-grid small { color: var(--muted); font-size: 8px; font-weight: 600; }
+.email-cadence-grid { display: grid; grid-template-columns: 1.25fr 1fr 1fr 1fr; align-items: end; gap: 12px; }
+.email-cadence-grid label { margin: 0; }
+.email-cadence-grid input { min-height: 44px; }
+.email-cadence-grid .weekend-toggle { min-height: 44px; display: flex; grid-template-columns: auto 1fr; align-items: center; gap: 9px; border: 1px solid #b9b9b2; padding: 0 12px; }
+.email-cadence-grid .weekend-toggle input { width: auto; min-height: 0; margin: 0; accent-color: var(--ink); }
+.email-generate-button { width: 100%; justify-content: center; margin-top: 16px; }
+.campaign-review { margin-top: 22px; }
+.campaign-review-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.campaign-review-heading > button { border: 0; border-bottom: 1px solid var(--ink); background: transparent; padding: 3px 0; color: var(--ink); font-size: 9px; font-weight: 900; }
+.campaign-review > h3 { margin: 15px 0 4px; font-size: 22px; letter-spacing: -.03em; }
+.campaign-review > p { margin: 0 0 16px; color: var(--muted); font-size: 10px; }
+.campaign-status { display: inline-flex; align-items: center; justify-content: center; min-height: 24px; border: 1px solid #aaa; background: #eee; padding: 0 8px; color: #555; font-size: 8px; font-weight: 900; text-transform: uppercase; }
+.campaign-status.status-draft { border-color: #c08b2c; background: #fff2d6; color: #835900; }
+.campaign-status.status-approved { border-color: #76963d; background: #eef8d6; color: #496c13; }
+.campaign-status.status-paused { border-color: #77688f; background: #eee8f6; color: #55446e; }
+.campaign-status.status-completed { border-color: #376d64; background: #e1f2ef; color: #275d55; }
+.campaign-status.status-cancelled { border-color: #a8a8a8; background: #efefef; color: #6e6e6e; }
+.scheduled-email-list { max-height: 440px; overflow-y: auto; border: 1px solid var(--line); background: white; }
+.scheduled-email { border-bottom: 1px solid var(--line); }
+.scheduled-email:last-child { border-bottom: 0; }
+.scheduled-email summary { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 20px; padding: 13px 15px; cursor: pointer; }
+.scheduled-email summary > span { min-width: 0; display: grid; gap: 3px; }
+.scheduled-email summary > span:last-child { text-align: right; }
+.scheduled-email summary strong { overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.scheduled-email summary b { font-size: 9px; }
+.scheduled-email summary small { color: var(--muted); font-size: 8px; text-transform: uppercase; }
+.scheduled-email > div { border-top: 1px solid var(--line); background: #faf8f1; padding: 16px; }
+.scheduled-email > div > strong { font-size: 11px; }
+.scheduled-email > div > p { margin: 10px 0 0; font-family: Georgia, serif; font-size: 11px; line-height: 1.55; white-space: pre-line; }
+.email-delivery-error { display: block; margin-top: 12px; color: #a83f28; }
+.authorization-box { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-top: 16px; border: 1.5px solid var(--ink); background: var(--navy); color: white; padding: 18px; }
+.authorization-box p { max-width: 620px; display: grid; gap: 5px; margin: 0; color: #c9cfdb; font-size: 10px; line-height: 1.5; }
+.authorization-box p strong { color: white; font-size: 13px; }
+.campaign-controls { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
+.campaign-controls > button:not(.primary-button) { border: 1px solid var(--ink); background: transparent; color: var(--ink); padding: 12px 16px; font-size: 9px; font-weight: 900; }
+.existing-campaigns { display: grid; gap: 0; margin-top: 28px; }
+.existing-campaigns > .eyebrow { margin-bottom: 9px; }
+.existing-campaigns > button { display: grid; grid-template-columns: minmax(0, 1fr) auto 20px; align-items: center; gap: 13px; border: 1px solid var(--line); border-bottom: 0; background: white; color: var(--ink); padding: 13px 15px; text-align: left; }
+.existing-campaigns > button:last-child { border-bottom: 1px solid var(--line); }
+.existing-campaigns > button:hover { background: #faf8f1; }
+.existing-campaigns > button > span { display: grid; gap: 4px; }
+.existing-campaigns > button strong { font-size: 11px; }
+.existing-campaigns > button small { color: var(--muted); font-size: 8px; }
+.existing-campaigns > button > i { font-style: normal; }
+.email-no-recipients { margin-top: 18px; border: 1px dashed #aaa; padding: 24px; }
+.email-no-recipients strong { font-size: 15px; }
+.email-no-recipients p { margin: 7px 0 0; color: var(--muted); font-size: 10px; }
 
 @media (max-width: 1100px) {
   .route-rationale { grid-template-columns: 1fr 1fr; }
@@ -649,6 +729,7 @@ h1 { max-width: 810px; margin: 8px 0 34px; font-size: clamp(40px, 5vw, 66px); li
   .strategy-thesis { grid-template-columns: 1fr 1fr; }
   .strategy-thesis > strong { grid-column: 1 / -1; border-top: 1px solid #44506a; padding: 17px; }
   .candidate-toolbar { align-items: stretch; flex-direction: column; }
+  .email-plan-button { justify-content: center; margin-left: 0; }
   .candidate-row { grid-template-columns: 42px minmax(150px, 1fr) auto 22px; }
   .candidate-value { grid-column: 2 / -1; }
   .candidate-row .status { display: none; }
@@ -688,6 +769,11 @@ h1 { max-width: 810px; margin: 8px 0 34px; font-size: clamp(40px, 5vw, 66px); li
   .candidate-value { grid-column: 2 / -1; }
   .candidate-links { grid-column: 2; }
   .candidate-row .row-arrow { grid-column: 3; grid-row: 1; }
+  .gmail-connection, .authorization-box { align-items: stretch; flex-direction: column; }
+  .email-recipient-grid, .email-cadence-grid { grid-template-columns: 1fr; }
+  .campaign-review-heading { padding-right: 42px; }
+  .scheduled-email summary { grid-template-columns: 1fr; gap: 8px; }
+  .scheduled-email summary > span:last-child { text-align: left; }
   .expand-pool { margin-inline: 14px; }
   .account-menu-wrap { right: 14px; }
 }
