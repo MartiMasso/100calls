@@ -654,6 +654,9 @@ h1 { max-width: 810px; margin: 8px 0 34px; font-size: clamp(40px, 5vw, 66px); li
 .email-plan-section > header > div { display: grid; gap: 6px; }
 .email-plan-section > header strong { font-size: 15px; }
 .email-plan-section > header > button { border: 0; border-bottom: 1px solid var(--ink); background: transparent; padding: 2px 0; font-size: 9px; font-weight: 900; }
+.email-recipient-actions { display: flex; align-items: center; gap: 12px; }
+.email-recipient-actions button { border: 0; border-bottom: 1px solid var(--ink); background: transparent; color: var(--ink); padding: 2px 0; font-size: 9px; font-weight: 900; }
+.email-recipient-actions button:disabled { cursor: not-allowed; opacity: .45; }
 .email-recipient-grid { max-height: 260px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px; overflow-y: auto; }
 .email-recipient-grid label { display: flex; align-items: center; gap: 10px; margin: 0; border: 1px solid var(--line); padding: 10px; cursor: pointer; }
 .email-recipient-grid label:has(input:checked) { border-color: var(--ink); background: #f5f9df; }
@@ -709,6 +712,7 @@ h1 { max-width: 810px; margin: 8px 0 34px; font-size: clamp(40px, 5vw, 66px); li
 .email-no-recipients { margin-top: 18px; border: 1px dashed #aaa; padding: 24px; }
 .email-no-recipients strong { font-size: 15px; }
 .email-no-recipients p { margin: 7px 0 0; color: var(--muted); font-size: 10px; }
+.email-no-recipients .primary-button { margin-top: 16px; }
 
 @media (max-width: 1100px) {
   .route-rationale { grid-template-columns: 1fr 1fr; }
@@ -770,6 +774,7 @@ h1 { max-width: 810px; margin: 8px 0 34px; font-size: clamp(40px, 5vw, 66px); li
   .candidate-links { grid-column: 2; }
   .candidate-row .row-arrow { grid-column: 3; grid-row: 1; }
   .gmail-connection, .authorization-box { align-items: stretch; flex-direction: column; }
+  .email-plan-section > header { align-items: flex-start; flex-direction: column; }
   .email-recipient-grid, .email-cadence-grid { grid-template-columns: 1fr; }
   .campaign-review-heading { padding-right: 42px; }
   .scheduled-email summary { grid-template-columns: 1fr; gap: 8px; }
