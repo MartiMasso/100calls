@@ -19,7 +19,7 @@ export function gmailOAuthConfig() {
   return {
     clientId: required("GOOGLE_GMAIL_CLIENT_ID"),
     clientSecret: required("GOOGLE_GMAIL_CLIENT_SECRET"),
-    redirectUri: env("GOOGLE_GMAIL_REDIRECT_URI") || "https://100calls.co/api/auth/gmail/callback",
+    redirectUri: env("GOOGLE_GMAIL_REDIRECT_URI") || "https://www.100calls.co/api/auth/gmail/callback",
   };
 }
 

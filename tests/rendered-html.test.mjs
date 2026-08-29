@@ -30,11 +30,12 @@ test("server-renders the 100 Calls application shell", async () => {
 });
 
 test("keeps the product flow unified, persistent, and bounded", async () => {
-  const [page, css, route, workspaceRoute, migration] = await Promise.all([
+  const [page, css, route, workspaceRoute, gmail, migration] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ai/research/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/workspace/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../lib/server/gmail.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260829103000_create_mission_workspaces.sql", import.meta.url), "utf8"),
   ]);
 
@@ -62,6 +63,7 @@ test("keeps the product flow unified, persistent, and bounded", async () => {
   assert.match(route, /outreachDraftSchema/);
   assert.match(route, /Never infer email patterns/);
   assert.match(route, /linkedinConnectionLimit/);
+  assert.match(gmail, /https:\/\/www\.100calls\.co\/api\/auth\/gmail\/callback/);
   assert.match(route, /contact_enrichment/);
   assert.match(route, /publicPhone/);
   assert.match(route, /websiteUrl/);

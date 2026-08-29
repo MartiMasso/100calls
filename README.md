@@ -70,7 +70,7 @@ OPENAI_MODEL=gpt-5.6-luna
 SUPABASE_SERVICE_ROLE_KEY=<your server-only Supabase service-role key>
 GOOGLE_GMAIL_CLIENT_ID=<dedicated Gmail OAuth client ID>
 GOOGLE_GMAIL_CLIENT_SECRET=<dedicated Gmail OAuth client secret>
-GOOGLE_GMAIL_REDIRECT_URI=https://100calls.co/api/auth/gmail/callback
+GOOGLE_GMAIL_REDIRECT_URI=https://www.100calls.co/api/auth/gmail/callback
 EMAIL_SCHEDULER_SECRET=<a long random server-only value>
 ```
 
@@ -85,7 +85,8 @@ use `npm run dev:vercel`.
 Gmail sending uses a separate Google OAuth client from Supabase sign-in. Its
 authorized redirect URIs must exactly include:
 
-- `https://100calls.co/api/auth/gmail/callback`
+- `https://www.100calls.co/api/auth/gmail/callback`
+- `https://100calls.co/api/auth/gmail/callback` (optional alias)
 - `http://localhost:3000/api/auth/gmail/callback`
 
 Only `gmail.send` is requested; the application cannot read the inbox. Refresh
