@@ -30,12 +30,13 @@ test("server-renders the 100 Calls application shell", async () => {
 });
 
 test("keeps the product flow unified, persistent, and bounded", async () => {
-  const [page, css, route, workspaceRoute, campaignRoute, gmail, migration] = await Promise.all([
+  const [page, css, route, workspaceRoute, campaignRoute, cronRoute, gmail, migration] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ai/research/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/workspace/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/email/campaigns/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/email/cron/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/server/gmail.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260829103000_create_mission_workspaces.sql", import.meta.url), "utf8"),
   ]);
@@ -80,10 +81,20 @@ test("keeps the product flow unified, persistent, and bounded", async () => {
   assert.match(page, /These emails have no sender signature/);
   assert.match(page, /Add sender details/);
   assert.match(page, /Your current sender signature will be added to every unsent draft/);
+  assert.match(page, /Scheduled by 100 Calls, not Gmail/);
+  assert.match(page, /Future emails do not appear in Gmail’s Scheduled folder/);
+  assert.match(page, /campaignStatusLabel/);
+  assert.match(page, /Cancel every email that has not started sending/);
+  assert.match(page, /Delete draft/);
   assert.match(route, /Do not add a closing sign-off or sender signature/);
   assert.match(campaignRoute, /Add your sender name or email signature before authorizing this plan/);
   assert.match(campaignRoute, /appendEmailSignature\(email\.body, emailSignature\)/);
+  assert.match(campaignRoute, /status: "in\.\(draft,queued\)"/);
   assert.match(campaignRoute, /status: "queued"/);
+  assert.match(campaignRoute, /action === "delete"/);
+  assert.match(campaignRoute, /Only draft email plans can be deleted/);
+  assert.match(cronRoute, /one final chance to stop delivery/);
+  assert.match(cronRoute, /finalCampaign\[0\]\?\.status !== "approved"/);
 
   assert.match(page, /fetch\("\/api\/workspace"/);
   assert.match(page, /All changes saved/);

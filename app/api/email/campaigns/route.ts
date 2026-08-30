@@ -171,21 +171,28 @@ export async function POST(request: Request) {
         return Response.json({ error: "Add your sender name or email signature before authorizing this plan." }, { status: 400 });
       }
       const draftQuery = new URLSearchParams({
-        select: "id,body",
+        select: "id,body,status",
         campaign_id: `eq.${campaignId}`,
         user_id: `eq.${user.id}`,
-        status: "eq.draft",
+        status: "in.(draft,queued)",
         order: "scheduled_at.asc",
         limit: "200",
       });
-      const draftEmails = await readAdminJson<Array<{ id: string; body: string }>>(
+      const draftEmails = await readAdminJson<Array<{ id: string; body: string; status: string }>>(
         await adminFetch(`scheduled_emails?${draftQuery}`),
         "The draft emails could not be checked before authorization.",
       );
-      if (draftEmails.length === 0) return Response.json({ error: "This plan has no draft emails to authorize." }, { status: 409 });
+      if (draftEmails.length === 0) return Response.json({ error: "This plan has no unsent emails to authorize." }, { status: 409 });
+      if (draftEmails.some((email) => email.status === "queued")) {
+        const repairResponse = await adminFetch(`scheduled_emails?campaign_id=eq.${campaignId}&user_id=eq.${user.id}&status=eq.queued`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "draft", updated_at: now }),
+        });
+        if (!repairResponse.ok) throw new Error("The previous authorization attempt could not be repaired safely.");
+      }
       for (let offset = 0; offset < draftEmails.length; offset += 20) {
         const updates = await Promise.all(draftEmails.slice(offset, offset + 20).map((email) => adminFetch(
-          `scheduled_emails?id=eq.${email.id}&campaign_id=eq.${campaignId}&user_id=eq.${user.id}&status=eq.draft`,
+          `scheduled_emails?id=eq.${email.id}&campaign_id=eq.${campaignId}&user_id=eq.${user.id}&status=in.(draft,queued)`,
           {
             method: "PATCH",
             headers: { prefer: "return=minimal" },
@@ -194,19 +201,38 @@ export async function POST(request: Request) {
         )));
         if (updates.some((response) => !response.ok)) throw new Error("The sender signature could not be added to every draft.");
       }
-      const emailsResponse = await adminFetch(`scheduled_emails?campaign_id=eq.${campaignId}&user_id=eq.${user.id}&status=eq.draft`, {
-        method: "PATCH",
-        headers: { prefer: "return=minimal" },
-        body: JSON.stringify({ status: "queued", updated_at: now }),
-      });
-      if (!emailsResponse.ok) throw new Error("The emails could not be queued.");
       const campaignResponse = await adminFetch(`email_campaigns?id=eq.${campaignId}&user_id=eq.${user.id}&status=eq.draft`, {
         method: "PATCH",
-        headers: { prefer: "return=minimal" },
+        headers: { prefer: "return=representation" },
         body: JSON.stringify({ status: "approved", approved_at: now, updated_at: now }),
       });
-      if (!campaignResponse.ok) throw new Error("The email plan could not be authorized.");
-      return Response.json({ status: "approved" });
+      const approvedCampaigns = campaignResponse.ok ? await campaignResponse.json() as Array<{ id: string }> : [];
+      if (!approvedCampaigns[0]) throw new Error("The email plan could not be authorized.");
+      const emailsResponse = await adminFetch(`scheduled_emails?campaign_id=eq.${campaignId}&user_id=eq.${user.id}&status=in.(draft,queued)`, {
+        method: "PATCH",
+        headers: { prefer: "return=representation" },
+        body: JSON.stringify({ status: "queued", updated_at: now }),
+      });
+      const queuedEmails = emailsResponse.ok ? await emailsResponse.json() as Array<{ id: string }> : [];
+      if (queuedEmails.length !== draftEmails.length) {
+        await adminFetch(`email_campaigns?id=eq.${campaignId}&user_id=eq.${user.id}&status=eq.approved`, {
+          method: "PATCH",
+          body: JSON.stringify({ status: "draft", approved_at: null, updated_at: new Date().toISOString() }),
+        });
+        throw new Error("The emails could not be queued. The plan remains a draft and nothing will be sent.");
+      }
+      return Response.json({ status: "approved", queued: queuedEmails.length });
+    }
+
+    if (action === "delete") {
+      if (owned[0].status !== "draft") return Response.json({ error: "Only draft email plans can be deleted." }, { status: 409 });
+      const deleteResponse = await adminFetch(`email_campaigns?id=eq.${campaignId}&user_id=eq.${user.id}&status=eq.draft`, {
+        method: "DELETE",
+        headers: { prefer: "return=representation" },
+      });
+      const deletedCampaigns = deleteResponse.ok ? await deleteResponse.json() as Array<{ id: string }> : [];
+      if (!deletedCampaigns[0]) throw new Error("The draft email plan could not be deleted.");
+      return Response.json({ deleted: true });
     }
 
     if (action === "pause" || action === "resume" || action === "cancel") {
@@ -220,10 +246,11 @@ export async function POST(request: Request) {
       });
       if (!campaignResponse.ok) throw new Error("The email campaign could not be updated.");
       if (action === "cancel") {
-        await adminFetch(`scheduled_emails?campaign_id=eq.${campaignId}&user_id=eq.${user.id}&status=in.(draft,queued)`, {
+        const cancelResponse = await adminFetch(`scheduled_emails?campaign_id=eq.${campaignId}&user_id=eq.${user.id}&status=in.(draft,queued)`, {
           method: "PATCH",
           body: JSON.stringify({ status: "cancelled", updated_at: now }),
         });
+        if (!cancelResponse.ok) throw new Error("The remaining emails could not be cancelled.");
       }
       return Response.json({ status: nextStatus });
     }

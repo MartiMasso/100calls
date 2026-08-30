@@ -1826,6 +1826,23 @@ function proposedSendTimes(startDate: string, time: string, count: number, daily
   return times;
 }
 
+function campaignStatusLabel(status: EmailCampaign["status"]): string {
+  if (status === "approved") return "Scheduled";
+  if (status === "paused") return "Paused";
+  if (status === "completed") return "Completed";
+  if (status === "cancelled") return "Cancelled";
+  return "Draft · not scheduled";
+}
+
+function scheduledEmailStatusLabel(status: ScheduledEmail["status"]): string {
+  if (status === "queued") return "Scheduled";
+  if (status === "sending") return "Sending now";
+  if (status === "sent") return "Sent";
+  if (status === "failed") return "Needs attention";
+  if (status === "cancelled") return "Cancelled";
+  return "Draft";
+}
+
 function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichingContacts, autoOpenLatestDraft, onClose, onOpenOutreachSettings, onNotify }: {
   accessToken: string;
   mission: Mission;
@@ -1862,7 +1879,7 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichi
     return () => window.clearTimeout(timer);
   }, [eligible]);
 
-  const loadCampaigns = useCallback(async () => {
+  const loadCampaigns = useCallback(async (openCampaignId?: string, allowAutoOpen = autoOpenLatestDraft) => {
     setLoading(true);
     setError("");
     try {
@@ -1874,12 +1891,15 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichi
       setConnection(result.connection ?? { connected: false, email: "", connectedAt: "" });
       setCampaigns(nextCampaigns);
       setSavedEmails(nextEmails);
-      if (autoOpenLatestDraft) {
-        const latestDraft = nextCampaigns.find((campaign) => campaign.mission_id === mission.id && campaign.status === "draft");
-        if (latestDraft) {
-          setActiveCampaign(latestDraft);
-          setActiveEmails(nextEmails.filter((email) => email.campaign_id === latestDraft.id));
-        }
+      const requestedCampaign = openCampaignId ? nextCampaigns.find((campaign) => campaign.id === openCampaignId) : undefined;
+      const latestDraft = allowAutoOpen ? nextCampaigns.find((campaign) => campaign.mission_id === mission.id && campaign.status === "draft") : undefined;
+      const nextActiveCampaign = requestedCampaign ?? latestDraft;
+      if (nextActiveCampaign) {
+        setActiveCampaign(nextActiveCampaign);
+        setActiveEmails(nextEmails.filter((email) => email.campaign_id === nextActiveCampaign.id));
+      } else if (openCampaignId || !allowAutoOpen) {
+        setActiveCampaign(null);
+        setActiveEmails([]);
       }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Email scheduling could not be loaded.");
@@ -1907,7 +1927,9 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichi
     }
   };
 
-  const campaignAction = async (action: "approve" | "pause" | "resume" | "cancel" | "disconnect", campaignId?: string) => {
+  const campaignAction = async (action: "approve" | "pause" | "resume" | "cancel" | "delete" | "disconnect", campaignId?: string) => {
+    if (action === "cancel" && !window.confirm("Cancel every email that has not started sending? Emails already sent cannot be recalled.")) return;
+    if (action === "delete" && !window.confirm("Delete this draft email plan? This cannot be undone.")) return;
     setWorking(true);
     setError("");
     try {
@@ -1916,13 +1938,15 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichi
         headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
         body: JSON.stringify({ action, campaignId, emailSignature }),
       });
-      const result = await response.json() as { error?: string };
+      const result = await response.json() as { error?: string; queued?: number };
       if (!response.ok) throw new Error(result.error || "The email plan could not be updated.");
-      if (action === "approve") onNotify("Email plan authorized · the queue will send at the approved times");
+      if (action === "approve") onNotify(`${result.queued ?? "All"} emails scheduled · you can pause or cancel the remaining queue at any time`);
+      if (action === "pause") onNotify("Email campaign paused · no queued email will be sent while paused");
+      if (action === "resume") onNotify("Email campaign resumed");
+      if (action === "cancel") onNotify("Every email that had not started sending was cancelled");
+      if (action === "delete") onNotify("Draft email plan deleted");
       if (action === "disconnect") onNotify("Gmail disconnected · active campaigns were paused automatically");
-      setActiveCampaign(null);
-      setActiveEmails([]);
-      await loadCampaigns();
+      await loadCampaigns(action === "delete" || action === "disconnect" ? undefined : campaignId, false);
     } catch (actionError) {
       setError(actionError instanceof Error ? actionError.message : "The email plan could not be updated.");
     } finally {
@@ -2020,6 +2044,12 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichi
     void campaignAction("approve", activeCampaign.id);
   };
 
+  const remainingEmailCount = activeEmails.filter((email) => ["draft", "queued", "sending"].includes(email.status)).length;
+  const sentEmailCount = activeEmails.filter((email) => email.status === "sent").length;
+  const failedEmailCount = activeEmails.filter((email) => email.status === "failed").length;
+  const nextScheduledEmail = activeEmails.find((email) => ["draft", "queued"].includes(email.status));
+  const missionCampaigns = campaigns.filter((campaign) => campaign.mission_id === mission.id);
+
   return (
     <div className="modal-layer email-campaign-layer" role="dialog" aria-modal="true" aria-labelledby="email-plan-title">
       <button className="modal-backdrop" onClick={onClose} aria-label="Close" />
@@ -2027,7 +2057,7 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichi
         <button type="button" className="close-button" onClick={onClose} aria-label="Close modal">×</button>
         <span className="step-label">APPROVED EMAIL OUTREACH</span>
         <h2 id="email-plan-title">Plan first. Authorize once. Send on schedule.</h2>
-        <p className="modal-intro">100 Calls can prepare personalized emails, but Gmail sends nothing until you review the complete plan and authorize it explicitly.</p>
+        <p className="modal-intro">100 Calls prepares the messages and keeps authorized emails in its own sending queue. Gmail receives each message only when its delivery time arrives.</p>
 
         {loading ? <div className="email-loading"><i className="spinner dark" /> Loading Gmail and campaign status…</div> : (
           <>
@@ -2036,6 +2066,8 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichi
               <div><span>{connection?.connected ? "✓" : "@"}</span><p><strong>{connection?.connected ? "Gmail connected" : "Connect the Gmail account that will send"}</strong><small>{connection?.connected ? connection.email : "Send-only access. 100 Calls cannot read your inbox."}</small></p></div>
               {connection?.connected ? <button onClick={() => void campaignAction("disconnect")} disabled={working}>Disconnect</button> : <button className="primary-button" onClick={connectGmail} disabled={working}>{working ? "Opening Google…" : "Connect Gmail"}<span>→</span></button>}
             </div>
+
+            {connection?.connected && <p className="email-queue-note"><strong>Scheduled by 100 Calls, not Gmail.</strong> Future emails do not appear in Gmail’s Scheduled folder. Each one appears in Sent after 100 Calls delivers it at the listed time.</p>}
 
             {connection?.connected && (
               <div className={`email-signature-status ${emailSignature ? "ready" : "missing"}`}>
@@ -2049,20 +2081,41 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichi
 
             {activeCampaign ? (
               <div className="campaign-review">
-                <div className="campaign-review-heading"><button onClick={() => { setActiveCampaign(null); setActiveEmails([]); }}>← Back</button><span className={`campaign-status status-${activeCampaign.status}`}>{activeCampaign.status}</span></div>
+                <div className="campaign-review-heading">
+                  <button onClick={() => { setActiveCampaign(null); setActiveEmails([]); }}>← Back</button>
+                  <div>
+                    <span className={`campaign-status status-${activeCampaign.status}`}>{campaignStatusLabel(activeCampaign.status)}</span>
+                    {activeCampaign.status === "draft" && <button type="button" className="delete-draft-button" onClick={() => void campaignAction("delete", activeCampaign.id)} disabled={working}>Delete draft</button>}
+                  </div>
+                </div>
                 <h3>{activeCampaign.name}</h3>
                 <p>{activeEmails.length} emails · {activeCampaign.daily_limit} per day · times shown in {activeCampaign.timezone}</p>
+                <div className={`campaign-state-panel state-${activeCampaign.status}`}>
+                  <div>
+                    <strong>{activeCampaign.status === "draft" ? "Nothing is scheduled yet" : activeCampaign.status === "approved" ? "Scheduled by 100 Calls" : activeCampaign.status === "paused" ? "Sending is paused" : activeCampaign.status === "cancelled" ? "Campaign cancelled" : "Campaign completed"}</strong>
+                    <p>{activeCampaign.status === "draft"
+                      ? "Review the messages below, then authorize once to put them into the sending queue."
+                      : activeCampaign.status === "approved"
+                        ? `${remainingEmailCount} email${remainingEmailCount === 1 ? "" : "s"} remaining${nextScheduledEmail ? ` · next delivery ${new Date(nextScheduledEmail.scheduled_at).toLocaleString()}` : ""}. They appear in Gmail Sent only after delivery.`
+                        : activeCampaign.status === "paused"
+                          ? `${remainingEmailCount} email${remainingEmailCount === 1 ? "" : "s"} are being held. Resume when you are ready or cancel the remaining queue.`
+                          : activeCampaign.status === "cancelled"
+                            ? `${sentEmailCount} sent before cancellation. Unsent queued emails will not be delivered.`
+                            : `${sentEmailCount} email${sentEmailCount === 1 ? "" : "s"} sent.`}</p>
+                  </div>
+                  <div><span><b>{sentEmailCount}</b> sent</span><span><b>{remainingEmailCount}</b> remaining</span>{failedEmailCount > 0 && <span className="failed"><b>{failedEmailCount}</b> failed</span>}</div>
+                </div>
                 <div className="scheduled-email-list">
                   {activeEmails.map((email) => (
                     <details key={email.id} className="scheduled-email">
-                      <summary><span><strong>{email.recipient_name}</strong><small>{email.recipient_email}</small></span><span><b>{new Date(email.scheduled_at).toLocaleString()}</b><small>{email.status}</small></span></summary>
+                      <summary><span><strong>{email.recipient_name}</strong><small>{email.recipient_email}</small></span><span><b>{new Date(email.scheduled_at).toLocaleString()}</b><small>{scheduledEmailStatusLabel(email.status)}</small></span></summary>
                       <div><strong>{email.subject}</strong><p>{email.body}</p>{email.last_error && <small className="email-delivery-error">{email.last_error}</small>}</div>
                     </details>
                   ))}
                 </div>
                 {activeCampaign.status === "draft" && <div className="authorization-box"><p><strong>Final authorization</strong>By continuing, you authorize 100 Calls to send these {activeEmails.length} emails from {connection?.email} at the listed times. Your current sender signature will be added to every unsent draft. You can cancel the campaign before an email is sent.</p><button className="primary-button" onClick={requestAuthorization} disabled={working}>{working ? "Authorizing…" : `Authorize and schedule ${activeEmails.length} emails`} <span>→</span></button></div>}
-                {activeCampaign.status === "approved" && <div className="campaign-controls"><button onClick={() => void campaignAction("pause", activeCampaign.id)} disabled={working}>Pause campaign</button><button onClick={() => void campaignAction("cancel", activeCampaign.id)} disabled={working}>Cancel unsent emails</button></div>}
-                {activeCampaign.status === "paused" && <div className="campaign-controls"><button className="primary-button" onClick={() => void campaignAction("resume", activeCampaign.id)} disabled={working}>Resume campaign <span>→</span></button><button onClick={() => void campaignAction("cancel", activeCampaign.id)} disabled={working}>Cancel unsent emails</button></div>}
+                {activeCampaign.status === "approved" && <div className="campaign-controls"><button onClick={() => void campaignAction("pause", activeCampaign.id)} disabled={working}>{working ? "Updating…" : "Pause sending"}</button><button className="danger-button" onClick={() => void campaignAction("cancel", activeCampaign.id)} disabled={working}>Cancel {remainingEmailCount} remaining</button></div>}
+                {activeCampaign.status === "paused" && <div className="campaign-controls"><button className="primary-button" onClick={() => void campaignAction("resume", activeCampaign.id)} disabled={working}>Resume campaign <span>→</span></button><button className="danger-button" onClick={() => void campaignAction("cancel", activeCampaign.id)} disabled={working}>Cancel {remainingEmailCount} remaining</button></div>}
               </div>
             ) : connection?.connected && eligible.length ? (
               <form className="email-plan-form" onSubmit={generatePlan}>
@@ -2078,8 +2131,19 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichi
               </form>
             ) : eligible.length === 0 ? <div className="email-no-recipients"><strong>{isEnrichingContacts ? "Verifying public contact details…" : "No verified professional emails are available yet."}</strong><p>{isEnrichingContacts ? "Email, LinkedIn, website and public professional phone details are being checked automatically." : "The candidate cards still show every other verified public route. Email planning becomes available as soon as a published address is found."}</p></div> : null}
 
-            {!activeCampaign && campaigns.filter((campaign) => campaign.mission_id === mission.id).length > 0 && (
-              <section className="existing-campaigns"><span className="eyebrow">SAVED EMAIL PLANS</span>{campaigns.filter((campaign) => campaign.mission_id === mission.id).map((campaign) => <button key={campaign.id} onClick={() => openCampaign(campaign)}><span><strong>{campaign.name}</strong><small>{savedEmails.filter((email) => email.campaign_id === campaign.id).length} emails · {new Date(campaign.created_at).toLocaleDateString()}</small></span><b className={`campaign-status status-${campaign.status}`}>{campaign.status}</b><i>→</i></button>)}</section>
+            {!activeCampaign && missionCampaigns.length > 0 && (
+              <section className="existing-campaigns">
+                <span className="eyebrow">SAVED EMAIL PLANS</span>
+                {missionCampaigns.map((campaign) => (
+                  <div className="existing-campaign-row" key={campaign.id}>
+                    <button type="button" className="existing-campaign-open" onClick={() => openCampaign(campaign)}>
+                      <span><strong>{campaign.name}</strong><small>{savedEmails.filter((email) => email.campaign_id === campaign.id).length} emails · {new Date(campaign.created_at).toLocaleDateString()}</small></span>
+                      <b className={`campaign-status status-${campaign.status}`}>{campaignStatusLabel(campaign.status)}</b><i>→</i>
+                    </button>
+                    {campaign.status === "draft" && <button type="button" className="delete-saved-draft" onClick={() => void campaignAction("delete", campaign.id)} disabled={working} aria-label={`Delete draft ${campaign.name}`}>Delete</button>}
+                  </div>
+                ))}
+              </section>
             )}
           </>
         )}

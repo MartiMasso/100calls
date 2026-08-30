@@ -58,6 +58,30 @@ async function runQueue(request: Request) {
         sender = { accessToken: await refreshGoogleAccessToken(refreshToken), email: connection.email };
         senderCache.set(email.user_id, sender);
       }
+
+      // Give a pause/cancel action one final chance to stop delivery after this
+      // worker claimed the row but before Gmail receives the send request.
+      const finalCampaign = await readAdminJson<Array<{ status: string }>>(
+        await adminFetch(`email_campaigns?${campaignQuery}`),
+        "The email campaign could not be rechecked before delivery.",
+      );
+      const finalEmailQuery = new URLSearchParams({ select: "status", id: `eq.${email.id}`, user_id: `eq.${email.user_id}`, limit: "1" });
+      const finalEmail = await readAdminJson<Array<{ status: string }>>(
+        await adminFetch(`scheduled_emails?${finalEmailQuery}`),
+        "The queued email could not be rechecked before delivery.",
+      );
+      if (finalCampaign[0]?.status !== "approved" || finalEmail[0]?.status !== "sending") {
+        if (finalEmail[0]?.status === "sending") {
+          await adminFetch(`scheduled_emails?id=eq.${email.id}&status=eq.sending`, {
+            method: "PATCH",
+            body: JSON.stringify({
+              status: finalCampaign[0]?.status === "cancelled" ? "cancelled" : "queued",
+              updated_at: new Date().toISOString(),
+            }),
+          });
+        }
+        continue;
+      }
       const messageId = await sendGmailMessage(sender.accessToken, sender.email, email.recipient_email, email.subject, email.body);
       await adminFetch(`scheduled_emails?id=eq.${email.id}&status=eq.sending`, {
         method: "PATCH",
