@@ -51,6 +51,8 @@ test("keeps the product flow unified, persistent, and bounded", async () => {
   assert.match(css, /\.mission-flow/);
   assert.match(css, /\.strategy-route/);
   assert.match(css, /\.candidate-row/);
+  assert.match(css, /\.authorization-box[^}]*background: #14213d/);
+  assert.doesNotMatch(css, /var\(--navy\)/);
 
   assert.match(route, /type ResearchStage = "plan" \| "refine" \| "contacts" \| "outreach"/);
   assert.match(route, /maxItems: 20/);

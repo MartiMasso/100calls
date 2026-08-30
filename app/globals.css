@@ -710,9 +710,9 @@ h1 { max-width: 810px; margin: 8px 0 34px; font-size: clamp(40px, 5vw, 66px); li
 .scheduled-email > div > strong { font-size: 11px; }
 .scheduled-email > div > p { margin: 10px 0 0; font-family: Georgia, serif; font-size: 11px; line-height: 1.55; white-space: pre-line; }
 .email-delivery-error { display: block; margin-top: 12px; color: #a83f28; }
-.authorization-box { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-top: 16px; border: 1.5px solid var(--ink); background: var(--navy); color: white; padding: 18px; }
-.authorization-box p { max-width: 620px; display: grid; gap: 5px; margin: 0; color: #c9cfdb; font-size: 10px; line-height: 1.5; }
-.authorization-box p strong { color: white; font-size: 13px; }
+.authorization-box { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-top: 16px; border: 1.5px solid #14213d; background: #14213d; color: #ffffff; padding: 18px; }
+.authorization-box p { max-width: 620px; display: grid; gap: 5px; margin: 0; color: #d9deea; font-size: 10px; line-height: 1.5; }
+.authorization-box p strong { color: #ffffff; font-size: 13px; }
 .signature-warning-layer { position: fixed; z-index: 130; inset: 0; display: grid; place-items: center; padding: 20px; }
 .signature-warning-backdrop { position: absolute; inset: 0; width: 100%; border: 0; background: rgba(8,15,31,.72); }
 .signature-warning-card { position: relative; width: min(540px, 100%); border: 1.5px solid var(--ink); background: var(--paper); padding: clamp(26px, 5vw, 44px); box-shadow: 9px 9px 0 var(--orange); }
