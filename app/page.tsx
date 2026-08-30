@@ -171,6 +171,13 @@ type ScheduledEmail = {
   sent_at: string | null;
 };
 
+type AccountEmailSummary = {
+  connection: GmailConnection;
+  queued: number;
+  sent: number;
+  activeCampaigns: number;
+};
+
 type MissionResearch = {
   contacts: Contact[];
   plan: ActionPlan | null;
@@ -212,6 +219,8 @@ type WorkspaceLoadResponse = {
   error?: string;
 };
 
+const PRIVACY_POLICY_URL = "https://100calls.co/privacy";
+const TERMS_URL = "https://100calls.co/terms";
 const MISSION_METADATA_KEY = "one_hundred_calls_workspace";
 const OUTREACH_PROFILE_METADATA_KEY = "one_hundred_calls_outreach_profile";
 const defaultOutreachProfile: UserOutreachProfile = {
@@ -528,6 +537,7 @@ export default function Home() {
     typeof window !== "undefined" && new URLSearchParams(window.location.search).get("mode") === "reset"
   );
   const [showAccount, setShowAccount] = useState(false);
+  const [showAccountDetails, setShowAccountDetails] = useState(false);
   const [showOutreachSettings, setShowOutreachSettings] = useState(false);
   const [showEmailCampaign, setShowEmailCampaign] = useState(false);
   const [resumeEmailCampaignAfterSettings, setResumeEmailCampaignAfterSettings] = useState(false);
@@ -774,6 +784,15 @@ export default function Home() {
     const haystack = `${contact.name} ${contact.role} ${contact.company}`.toLowerCase();
     return matchesType && haystack.includes(query.toLowerCase());
   }), [contacts, filter, query]);
+
+  const workspaceTotals = useMemo(() => {
+    const research = missions.map((item) => missionResearch[item.id] ?? emptyResearch());
+    return {
+      missions: missions.length,
+      contacts: research.reduce((total, item) => total + item.contacts.length, 0),
+      contacted: research.reduce((total, item) => total + item.contacted.length, 0),
+    };
+  }, [missionResearch, missions]);
 
   const notify = useCallback((message: string) => {
     setToast(message);
@@ -1369,6 +1388,7 @@ export default function Home() {
             <div className="account-menu">
               <span className="eyebrow">SIGNED IN AS</span>
               <strong>{accountEmail}</strong>
+              <button onClick={() => { setShowAccount(false); setShowAccountDetails(true); }}>Account</button>
               <button onClick={() => { setShowAccount(false); setResumeEmailCampaignAfterSettings(false); setShowOutreachSettings(true); }}>Outreach settings</button>
               <button onClick={() => { setShowAccount(false); setRecoveryMode(true); }}>Change password</button>
               <button onClick={signOut}>Sign out</button>
@@ -1420,6 +1440,21 @@ export default function Home() {
           onCopy={copyText}
           onGenerate={() => void generateOutreach(selected, true)}
           onContact={() => markContacted(selected.id)}
+        />
+      )}
+
+      {showAccountDetails && (
+        <AccountModal
+          session={session}
+          profile={userOutreachProfile}
+          totals={workspaceTotals}
+          onClose={() => setShowAccountDetails(false)}
+          onOpenOutreachSettings={() => {
+            setShowAccountDetails(false);
+            setResumeEmailCampaignAfterSettings(false);
+            setShowOutreachSettings(true);
+          }}
+          onChangePassword={() => { setShowAccountDetails(false); setRecoveryMode(true); }}
         />
       )}
 
@@ -2564,6 +2599,124 @@ function ContactDrawer({ contact, isContacted, isGenerating, isEnrichingContacts
         </section>
         <button className={`primary-button drawer-cta ${isContacted ? "completed" : ""}`} onClick={onContact} disabled={isContacted}>{isContacted ? "Already in follow-up" : "Mark as contacted"}<span>{isContacted ? "✓" : "→"}</span></button>
       </aside>
+    </div>
+  );
+}
+
+function formatAccountDate(value: string | null | undefined): string {
+  if (!value) return "Not available";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Not available";
+  return date.toLocaleDateString(undefined, { day: "numeric", month: "long", year: "numeric" });
+}
+
+function signInMethodLabel(session: Session): string {
+  const metadata = session.user.app_metadata as { provider?: string; providers?: string[] } | undefined;
+  const providers = metadata?.providers?.length ? metadata.providers : [metadata?.provider ?? "email"];
+  return providers
+    .map((provider) => (provider === "google" ? "Google" : provider === "email" ? "Email and password" : provider))
+    .join(" · ");
+}
+
+function AccountModal({ session, profile, totals, onClose, onOpenOutreachSettings, onChangePassword }: {
+  session: Session;
+  profile: UserOutreachProfile;
+  totals: { missions: number; contacts: number; contacted: number };
+  onClose: () => void;
+  onOpenOutreachSettings: () => void;
+  onChangePassword: () => void;
+}) {
+  const [emailSummary, setEmailSummary] = useState<AccountEmailSummary | null>(null);
+  const [emailError, setEmailError] = useState("");
+  const [loadingEmail, setLoadingEmail] = useState(true);
+  const accessToken = session.access_token;
+  const accountEmail = session.user.email ?? "Your account";
+  const senderIdentity = [profile.name, profile.role, profile.organization].filter(Boolean).join(" · ");
+
+  useEffect(() => {
+    let active = true;
+    const loadEmailSummary = async () => {
+      try {
+        const response = await fetch("/api/email/campaigns", { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" });
+        const result = await response.json() as { connection?: GmailConnection; campaigns?: EmailCampaign[]; emails?: ScheduledEmail[]; error?: string };
+        if (!response.ok) throw new Error(result.error || "Gmail connection status could not be loaded.");
+        if (!active) return;
+        const emails = result.emails ?? [];
+        setEmailSummary({
+          connection: result.connection ?? { connected: false, email: "", connectedAt: "" },
+          queued: emails.filter((email) => email.status === "queued" || email.status === "sending").length,
+          sent: emails.filter((email) => email.status === "sent").length,
+          activeCampaigns: (result.campaigns ?? []).filter((campaign) => campaign.status === "approved" || campaign.status === "paused").length,
+        });
+      } catch (loadError) {
+        if (active) setEmailError(loadError instanceof Error ? loadError.message : "Gmail connection status could not be loaded.");
+      } finally {
+        if (active) setLoadingEmail(false);
+      }
+    };
+    void loadEmailSummary();
+    return () => { active = false; };
+  }, [accessToken]);
+
+  return (
+    <div className="modal-layer" role="dialog" aria-modal="true" aria-labelledby="account-title">
+      <button className="modal-backdrop" onClick={onClose} aria-label="Close" />
+      <div className="mission-modal account-modal">
+        <button type="button" className="close-button" onClick={onClose} aria-label="Close modal">×</button>
+        <span className="step-label">ACCOUNT</span>
+        <h2 id="account-title">Your account, your sender identity, your rules.</h2>
+
+        <dl className="account-facts">
+          <div><dt>Email</dt><dd>{accountEmail}</dd></div>
+          <div><dt>Sign-in method</dt><dd>{signInMethodLabel(session)}</dd></div>
+          <div><dt>Email confirmed</dt><dd>{session.user.email_confirmed_at ? formatAccountDate(session.user.email_confirmed_at) : "Pending confirmation"}</dd></div>
+          <div><dt>Member since</dt><dd>{formatAccountDate(session.user.created_at)}</dd></div>
+          <div><dt>Last sign-in</dt><dd>{formatAccountDate(session.user.last_sign_in_at)}</dd></div>
+          <div><dt>Account ID</dt><dd className="account-id">{session.user.id}</dd></div>
+        </dl>
+
+        <section className="account-block">
+          <header><span className="eyebrow">SENDER IDENTITY</span><button type="button" onClick={onOpenOutreachSettings}>Edit outreach settings</button></header>
+          <p>{senderIdentity || "No sender details yet. Messages need a real name before any email can be authorized."}</p>
+        </section>
+
+        <section className="account-block">
+          <header><span className="eyebrow">GMAIL SENDING</span></header>
+          {loadingEmail && <p>Checking your Gmail connection…</p>}
+          {!loadingEmail && emailError && <p className="account-block-error">{emailError}</p>}
+          {!loadingEmail && !emailError && emailSummary && (
+            emailSummary.connection.connected ? (
+              <>
+                <p>Connected as <strong>{emailSummary.connection.email}</strong> since {formatAccountDate(emailSummary.connection.connectedAt)}.</p>
+                <small>{emailSummary.queued} email{emailSummary.queued === 1 ? "" : "s"} waiting to send · {emailSummary.sent} sent · {emailSummary.activeCampaigns} live campaign{emailSummary.activeCampaigns === 1 ? "" : "s"}. 100 Calls only ever requests permission to send, never to read your inbox.</small>
+              </>
+            ) : (
+              <p>Not connected. Gmail is only linked when you authorize an email campaign, and only the send permission is requested.</p>
+            )
+          )}
+        </section>
+
+        <section className="account-block">
+          <header><span className="eyebrow">WORKSPACE</span></header>
+          <div className="account-stats">
+            <div><strong>{totals.missions}</strong><small>Missions</small></div>
+            <div><strong>{totals.contacts}</strong><small>Candidates</small></div>
+            <div><strong>{totals.contacted}</strong><small>Contacted</small></div>
+          </div>
+        </section>
+
+        <section className="account-block account-legal">
+          <header><span className="eyebrow">LEGAL</span></header>
+          <a href={PRIVACY_POLICY_URL} target="_blank" rel="noreferrer">Privacy Policy<span aria-hidden="true">↗</span></a>
+          <a href={TERMS_URL} target="_blank" rel="noreferrer">Terms of Use<span aria-hidden="true">↗</span></a>
+          <small>How your data and the contact data you research are handled, and the rules that apply when you send outreach through 100 Calls.</small>
+        </section>
+
+        <div className="modal-actions">
+          <button type="button" className="secondary-button" onClick={onChangePassword}>Change password</button>
+          <button type="button" className="primary-button" onClick={onClose}>Done <span>→</span></button>
+        </div>
+      </div>
     </div>
   );
 }

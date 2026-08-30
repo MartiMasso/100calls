@@ -1,0 +1,276 @@
+import type { Metadata } from "next";
+import Link from "next/link";
+import { LegalDocument, type LegalSection } from "../legal-document";
+
+const UPDATED = "30 August 2026";
+
+export const metadata: Metadata = {
+  title: "Terms of Use · 100 Calls",
+  description: "The rules for using 100 Calls: your account, your outreach, the integrations you connect, and who is responsible for what.",
+};
+
+const sections: LegalSection[] = [
+  {
+    id: "agreement",
+    heading: "The agreement",
+    content: (
+      <>
+        <p>
+          These Terms of Use are the agreement between you and Martí Massó (“100 Calls”, “we”, “us”), based in Spain,
+          for the use of 100calls.co and the application behind it. Creating an account means you accept them. If you
+          do not, do not use the service.
+        </p>
+        <p>
+          They work together with our <Link href="/privacy">Privacy Policy</Link>, which describes how personal data is
+          handled and forms part of this agreement.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "what-it-is",
+    heading: "What 100 Calls is, and what it is not",
+    content: (
+      <>
+        <p>
+          100 Calls helps you define a validation mission, find strategic people through AI-assisted research over
+          public sources, prepare outreach, schedule email through your own mailbox, and record what you learn.
+        </p>
+        <p>It is not a contact database, a lead list vendor, or a bulk emailing platform. It is not legal, tax,
+          investment or professional advice. It does not guarantee that a contact is reachable, that a message will be
+          delivered or answered, or that your idea will be validated. The research and the drafts are working material
+          that you are expected to review.</p>
+      </>
+    ),
+  },
+  {
+    id: "eligibility",
+    heading: "Eligibility and your account",
+    content: (
+      <ul>
+        <li>You must be at least 18 years old and able to enter into a binding contract. If you use 100 Calls for an
+          organization, you confirm you are authorized to accept these terms for it.</li>
+        <li>Your account is personal. Keep your credentials secure, do not share access, and tell us promptly at{" "}
+          <a href="mailto:hello@100calls.co">hello@100calls.co</a> if you believe it has been compromised.</li>
+        <li>The details you save as your sender identity must be true. Messages sent under a false name, role or
+          organization are a breach of these terms.</li>
+        <li>Everything done through your account is your responsibility, including anything sent by someone you gave
+          access to.</li>
+      </ul>
+    ),
+  },
+  {
+    id: "outreach-rules",
+    heading: "The rules that govern your outreach",
+    content: (
+      <>
+        <p>
+          This is the part that matters most. When you send a message through 100 Calls, <b>you are the sender</b> and,
+          under data protection law, the controller of that contact’s data. We provide the tooling; the outreach is
+          yours. You agree that:
+        </p>
+        <ul>
+          <li>You have a lawful basis for contacting each person, and, where you rely on legitimate interest, you have
+            assessed it and can defend it.</li>
+          <li>Your messages identify you truthfully, state clearly why you are writing, and give the recipient an easy
+            way to refuse further contact.</li>
+          <li>You honour every objection, unsubscribe or request to stop, immediately and permanently, and you cancel
+            pending scheduled emails to anyone who asks you to stop.</li>
+          <li>You comply with the law that applies to you and to the recipient, including the GDPR and the ePrivacy
+            rules, the Spanish LSSI and LOPDGDD, the CAN-SPAM Act, and Canada’s CASL where relevant.</li>
+          <li>You comply with the terms and program policies of any mailbox provider you connect, including Google’s
+            sender guidelines and bulk-sender requirements.</li>
+          <li>You keep volume and pace reasonable, and you do not use 100 Calls to reach people you have no genuine
+            reason to speak to.</li>
+        </ul>
+        <p>You must not use 100 Calls to send unsolicited commercial bulk email, upload or process purchased, scraped or
+          rented contact lists, contact people who have already objected, impersonate anyone, send phishing, malware,
+          scams, financial or medical promotions, adult content, harassment, or any message whose purpose is to deceive.
+          You must not use the AI features to fabricate credentials, endorsements, affiliations or facts about yourself
+          or about the recipient.</p>
+      </>
+    ),
+  },
+  {
+    id: "ai-content",
+    heading: "AI-generated content",
+    content: (
+      <>
+        <p>
+          Research results, contact details, fit rankings and message drafts are generated by AI models and can be
+          inaccurate, outdated or invented. You are responsible for verifying anything you rely on, especially contact
+          details and any factual claim about a person or company.
+        </p>
+        <p>
+          No email is sent without your explicit authorization. Once you authorize a campaign, the messages queued from
+          it are yours: you own what they say and the consequences of sending them. Similar output may be generated for
+          other users, so we make no claim that drafts are unique to you.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "integrations",
+    heading: "Connected integrations",
+    content: (
+      <>
+        <p>
+          100 Calls connects to external providers so outreach, scheduling and conversation notes stay in one flow.
+          Gmail sending is available today; scheduling and meeting-notes providers such as Calendly and Granola may be
+          offered as optional connections.
+        </p>
+        <ul>
+          <li>Each connection is voluntary, requests the narrowest permission that makes the feature work, and can be
+            disconnected at any time.</li>
+          <li>Your use of a connected provider remains governed by that provider’s own terms and policies, and their
+            outage, rate limit, policy change or account suspension is outside our control.</li>
+          <li>Disconnecting Gmail, or losing access to it, pauses the campaigns that depend on it. Emails already sent
+            cannot be recalled.</li>
+          <li>We may add, change or remove integrations as providers evolve.</li>
+        </ul>
+      </>
+    ),
+  },
+  {
+    id: "fair-use",
+    heading: "Fair use of the service",
+    content: (
+      <p>
+        AI research and enrichment run against rate limits per account, and sending is limited by the daily cap you set
+        and by your mailbox provider’s own limits. Do not attempt to bypass these limits, automate the interface, scrape
+        the service, reverse engineer it, resell access, or use it to build a competing product. We may apply
+        proportionate technical limits to protect the service and other users.
+      </p>
+    ),
+  },
+  {
+    id: "your-content",
+    heading: "Your content and our software",
+    content: (
+      <>
+        <p>
+          Your missions, notes, contacts and messages remain yours. You grant us only the licence needed to host,
+          process and transmit them so the service can work, including sending them to the providers listed in the
+          Privacy Policy for that purpose. We do not use your content to train AI models, and we do not share it with
+          other accounts.
+        </p>
+        <p>
+          The application, its interface, brand and underlying software remain ours. These terms grant you a personal,
+          non-exclusive, non-transferable, revocable right to use the service, and nothing more.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "availability",
+    heading: "Availability and changes",
+    content: (
+      <p>
+        100 Calls is offered as it is and as available, and is actively developed: features may change, improve or be
+        withdrawn. We aim for continuous availability but do not promise uninterrupted or error-free operation, and
+        maintenance, provider incidents or third-party outages can interrupt it. Scheduled emails depend on external
+        systems and may be delayed. Keep your own copy of anything you cannot afford to lose.
+      </p>
+    ),
+  },
+  {
+    id: "fees",
+    heading: "Fees",
+    content: (
+      <p>
+        Where a plan is offered free of charge, we may change or end it with reasonable notice. If paid plans are
+        introduced, the price, billing cycle, taxes and refund conditions will be presented before you subscribe, and
+        no charge will be made without your prior agreement.
+      </p>
+    ),
+  },
+  {
+    id: "termination",
+    heading: "Suspension and termination",
+    content: (
+      <>
+        <p>
+          You may stop using 100 Calls and ask for your account to be deleted at any time by writing to{" "}
+          <a href="mailto:hello@100calls.co">hello@100calls.co</a>. Deletion follows the retention periods in the
+          Privacy Policy.
+        </p>
+        <p>
+          We may suspend or terminate an account that breaches these terms, in particular the outreach rules, that
+          creates a legal or security risk, or that is used to harm recipients. Where circumstances allow, we will warn
+          you first and give you a chance to fix the problem. Serious cases, such as spam or phishing, may be stopped
+          immediately, including cancelling pending emails.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "liability",
+    heading: "Liability",
+    content: (
+      <>
+        <p>
+          To the fullest extent permitted by law, we are not liable for indirect or consequential loss, lost profit,
+          lost opportunity, reputational harm, or loss caused by AI output you did not verify, by a message you chose to
+          send, or by a third-party provider. Our total liability for any claim relating to the service is limited to
+          the greater of the amount you paid us in the twelve months before the claim, or one hundred euros.
+        </p>
+        <p>
+          Nothing here excludes liability that cannot be excluded by law, including for fraud, gross negligence, death
+          or personal injury, or the statutory rights of consumers.
+        </p>
+        <p>
+          You agree to hold us harmless against claims, fines or costs arising from your outreach, from the contact data
+          you chose to process, or from your breach of these terms, including complaints or sanctions from a data
+          protection authority relating to messages sent from your account.
+        </p>
+      </>
+    ),
+  },
+  {
+    id: "law",
+    heading: "Governing law",
+    content: (
+      <p>
+        These terms are governed by Spanish law. Disputes fall to the courts of Barcelona, Spain, unless you are a
+        consumer, in which case you keep the right to bring proceedings in the courts of your place of residence and to
+        rely on the mandatory law of that country.
+      </p>
+    ),
+  },
+  {
+    id: "updates",
+    heading: "Changes to these terms",
+    content: (
+      <p>
+        We may update these terms as the service develops. The date at the top shows the current version, and material
+        changes will be announced inside the product or by email before they take effect. Continuing to use 100 Calls
+        after that date means you accept the updated terms; if you do not, you can close your account.
+      </p>
+    ),
+  },
+  {
+    id: "contact",
+    heading: "Contact",
+    content: (
+      <p>
+        Questions about these terms: <a href="mailto:legal@100calls.co">legal@100calls.co</a>. Privacy matters:{" "}
+        <a href="mailto:privacy@100calls.co">privacy@100calls.co</a>. Anything else:{" "}
+        <a href="mailto:hello@100calls.co">hello@100calls.co</a>.
+      </p>
+    ),
+  },
+];
+
+export default function TermsPage() {
+  return (
+    <LegalDocument
+      eyebrow="TERMS OF USE"
+      title="The rules behind every message you send."
+      summary="100 Calls gives you the research and the drafts. You decide who to contact and what to say, which makes you the sender in the eyes of the law. These terms set out what that means for both of us."
+      updated={UPDATED}
+      effective={UPDATED}
+      sections={sections}
+      related={{ href: "/privacy", label: "Privacy Policy" }}
+    />
+  );
+}

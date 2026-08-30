@@ -14,6 +14,8 @@ and turn conversations into market-validation evidence.
 - Source links, fit ranking, conversation angles, and personalized outreach
 - Mission strategy, contacts, learnings, and follow-up state persisted in Supabase
 - Reviewable Gmail campaigns with explicit authorization, pause, and cancellation
+- Account panel with sign-in, Gmail connection, and workspace details
+- Published Privacy Policy at `/privacy` and Terms of Use at `/terms`
 - Per-user request limits and server-side API-key protection
 - Deployments through OpenAI Sites or Vercel
 
@@ -102,6 +104,26 @@ Supabase SQL Editor before testing the connection. After the application is
 deployed, set the same random `EMAIL_SCHEDULER_SECRET` in Vercel and in
 `supabase/email_scheduler_setup.sql`, then run that second file in the SQL
 Editor to process approved emails once per minute.
+
+## Legal pages
+
+`/privacy` and `/terms` are server-rendered pages linked from the account panel
+through their canonical URLs, `https://100calls.co/privacy` and
+`https://100calls.co/terms`. They describe the real behaviour of the product:
+the split between account data (controller) and researched contact data
+(processor), the `gmail.send`-only Google scope with its Limited Use
+disclosure, the encrypted refresh tokens, the OpenAI research calls, and the
+scheduling and meeting-notes integrations such as Calendly and Granola that
+users may connect later.
+
+Before announcing them publicly, confirm these details in
+`app/privacy/page.tsx` and `app/terms/page.tsx`:
+
+- the operating legal entity, its registered address, and tax identifier
+- the `privacy@`, `legal@`, and `hello@` mailboxes on `100calls.co`
+- the Supabase project region, if it should be named explicitly
+- the governing-law venue, currently Spanish law and the courts of Barcelona
+- the stated retention periods, which must match what is actually deleted
 
 ## Other commands
 
