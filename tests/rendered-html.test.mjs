@@ -30,11 +30,12 @@ test("server-renders the 100 Calls application shell", async () => {
 });
 
 test("keeps the product flow unified, persistent, and bounded", async () => {
-  const [page, css, route, workspaceRoute, gmail, migration] = await Promise.all([
+  const [page, css, route, workspaceRoute, campaignRoute, gmail, migration] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/globals.css", import.meta.url), "utf8"),
     readFile(new URL("../app/api/ai/research/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/workspace/route.ts", import.meta.url), "utf8"),
+    readFile(new URL("../app/api/email/campaigns/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../lib/server/gmail.ts", import.meta.url), "utf8"),
     readFile(new URL("../supabase/migrations/20260829103000_create_mission_workspaces.sql", import.meta.url), "utf8"),
   ]);
@@ -73,6 +74,14 @@ test("keeps the product flow unified, persistent, and bounded", async () => {
   assert.match(page, /const openEmailPlan/);
   assert.match(page, /contactsMissingEmail/);
   assert.doesNotMatch(page, /Find published emails for this pool/);
+  assert.match(page, /emailSignature/);
+  assert.match(page, /These emails have no sender signature/);
+  assert.match(page, /Add sender details/);
+  assert.match(page, /Your current sender signature will be added to every unsent draft/);
+  assert.match(route, /Do not add a closing sign-off or sender signature/);
+  assert.match(campaignRoute, /Add your sender name or email signature before authorizing this plan/);
+  assert.match(campaignRoute, /appendEmailSignature\(email\.body, emailSignature\)/);
+  assert.match(campaignRoute, /status: "queued"/);
 
   assert.match(page, /fetch\("\/api\/workspace"/);
   assert.match(page, /All changes saved/);

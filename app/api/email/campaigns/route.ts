@@ -35,6 +35,12 @@ function cleanEmail(value: unknown): string {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "";
 }
 
+function appendEmailSignature(body: unknown, signature: string): string {
+  const message = cleanText(body, 5200);
+  if (!signature || message.endsWith(signature)) return message;
+  return `${message}\n\n${signature}`.slice(0, 6000);
+}
+
 function validUuid(value: unknown): string {
   const id = cleanText(value, 50);
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(id) ? id : "";
@@ -108,6 +114,7 @@ export async function POST(request: Request) {
       const name = cleanText(body.name, 160);
       const timezone = cleanText(body.timezone, 80) || "Europe/Madrid";
       const dailyLimit = typeof body.dailyLimit === "number" ? Math.min(50, Math.max(1, Math.round(body.dailyLimit))) : 10;
+      const emailSignature = cleanText(body.emailSignature, 800);
       const items = Array.isArray(body.emails) ? body.emails : [];
       if (!missionId || !name || items.length === 0 || items.length > 200) {
         return Response.json({ error: "The proposed email plan is invalid." }, { status: 400 });
@@ -123,7 +130,7 @@ export async function POST(request: Request) {
           recipient_email: cleanEmail(value.recipientEmail),
           recipient_name: cleanText(value.recipientName, 160),
           subject: cleanText(value.subject, 200),
-          body: cleanText(value.body, 6000),
+          body: appendEmailSignature(value.body, emailSignature),
           scheduled_at: scheduledAt.toISOString(),
         };
         return row.contact_id && row.recipient_email && row.recipient_name && row.subject && row.body && scheduledAt.getTime() > now && scheduledAt.getTime() <= maxDate ? [row] : [];
@@ -159,6 +166,34 @@ export async function POST(request: Request) {
 
     if (action === "approve") {
       if (owned[0].status !== "draft") return Response.json({ error: "Only a draft plan can be authorized." }, { status: 409 });
+      const emailSignature = cleanText(body.emailSignature, 800);
+      if (!emailSignature) {
+        return Response.json({ error: "Add your sender name or email signature before authorizing this plan." }, { status: 400 });
+      }
+      const draftQuery = new URLSearchParams({
+        select: "id,body",
+        campaign_id: `eq.${campaignId}`,
+        user_id: `eq.${user.id}`,
+        status: "eq.draft",
+        order: "scheduled_at.asc",
+        limit: "200",
+      });
+      const draftEmails = await readAdminJson<Array<{ id: string; body: string }>>(
+        await adminFetch(`scheduled_emails?${draftQuery}`),
+        "The draft emails could not be checked before authorization.",
+      );
+      if (draftEmails.length === 0) return Response.json({ error: "This plan has no draft emails to authorize." }, { status: 409 });
+      for (let offset = 0; offset < draftEmails.length; offset += 20) {
+        const updates = await Promise.all(draftEmails.slice(offset, offset + 20).map((email) => adminFetch(
+          `scheduled_emails?id=eq.${email.id}&campaign_id=eq.${campaignId}&user_id=eq.${user.id}&status=eq.draft`,
+          {
+            method: "PATCH",
+            headers: { prefer: "return=minimal" },
+            body: JSON.stringify({ body: appendEmailSignature(email.body, emailSignature), updated_at: now }),
+          },
+        )));
+        if (updates.some((response) => !response.ok)) throw new Error("The sender signature could not be added to every draft.");
+      }
       const emailsResponse = await adminFetch(`scheduled_emails?campaign_id=eq.${campaignId}&user_id=eq.${user.id}&status=eq.draft`, {
         method: "PATCH",
         headers: { prefer: "return=minimal" },

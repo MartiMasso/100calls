@@ -20,6 +20,7 @@ type UserOutreachProfile = {
   role: string;
   organization: string;
   background: string;
+  emailSignature: string;
   preferredLanguage: string;
   linkedinConnectionLimit: 0 | 200 | 300;
   linkedinWorkflow: LinkedInWorkflow;
@@ -219,6 +220,7 @@ const defaultOutreachProfile: UserOutreachProfile = {
   role: "",
   organization: "",
   background: "",
+  emailSignature: "",
   preferredLanguage: "English",
   linkedinConnectionLimit: 200,
   linkedinWorkflow: "connect_first",
@@ -262,6 +264,22 @@ function cleanStoredEmail(value: unknown): string {
   return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) ? email : "";
 }
 
+function resolvedEmailSignature(profile: UserOutreachProfile): string {
+  const explicit = cleanMissionField(profile.emailSignature, 800);
+  if (explicit) return explicit;
+  const name = cleanMissionField(profile.name, 120);
+  if (!name) return "";
+  const affiliation = [cleanMissionField(profile.role, 160), cleanMissionField(profile.organization, 160)].filter(Boolean).join(" · ");
+  return [name, affiliation].filter(Boolean).join("\n");
+}
+
+function appendEmailSignature(body: string, signature: string): string {
+  const message = cleanMissionField(body, 5200);
+  const cleanedSignature = cleanMissionField(signature, 800);
+  if (!cleanedSignature || message.endsWith(cleanedSignature)) return message;
+  return `${message}\n\n${cleanedSignature}`.slice(0, 6000);
+}
+
 function readStoredOutreach(value: unknown): OutreachDrafts | undefined {
   if (!value || typeof value !== "object") return undefined;
   const candidate = value as Record<string, unknown>;
@@ -269,7 +287,7 @@ function readStoredOutreach(value: unknown): OutreachDrafts | undefined {
   const allowedChannels = new Set<OutreachChannel>(["Email", "LinkedIn connection", "LinkedIn message", "Public contact form", "No direct route"]);
   const outreach: OutreachDrafts = {
     emailSubject: cleanMissionField(candidate.emailSubject, 200),
-    emailBody: cleanMissionField(candidate.emailBody, 2400),
+    emailBody: cleanMissionField(candidate.emailBody, 6000),
     linkedinConnectionMessage: cleanMissionField(candidate.linkedinConnectionMessage, 300),
     linkedinDirectMessage: cleanMissionField(candidate.linkedinDirectMessage, 1800),
     contactFormMessage: cleanMissionField(candidate.contactFormMessage, 1800),
@@ -283,16 +301,18 @@ function readStoredOutreach(value: unknown): OutreachDrafts | undefined {
 
 function readStoredOutreachProfile(metadata: Record<string, unknown> | undefined): UserOutreachProfile {
   const stored = metadata?.[OUTREACH_PROFILE_METADATA_KEY];
-  if (!stored || typeof stored !== "object") return defaultOutreachProfile;
+  const identityName = cleanMissionField(metadata?.full_name ?? metadata?.name, 120);
+  if (!stored || typeof stored !== "object") return { ...defaultOutreachProfile, name: identityName };
   const candidate = stored as Record<string, unknown>;
   const requestedLimit = candidate.linkedinConnectionLimit;
   const requestedWorkflow = candidate.linkedinWorkflow;
   return {
     version: 1,
-    name: cleanMissionField(candidate.name, 120),
+    name: cleanMissionField(candidate.name, 120) || identityName,
     role: cleanMissionField(candidate.role, 160),
     organization: cleanMissionField(candidate.organization, 160),
     background: cleanMissionField(candidate.background, 1600),
+    emailSignature: cleanMissionField(candidate.emailSignature, 800),
     preferredLanguage: cleanMissionField(candidate.preferredLanguage, 80) || "English",
     linkedinConnectionLimit: requestedLimit === 0 || requestedLimit === 300 ? requestedLimit : 200,
     linkedinWorkflow: requestedWorkflow === "direct_when_available" || requestedWorkflow === "either" ? requestedWorkflow : "connect_first",
@@ -510,6 +530,7 @@ export default function Home() {
   const [showAccount, setShowAccount] = useState(false);
   const [showOutreachSettings, setShowOutreachSettings] = useState(false);
   const [showEmailCampaign, setShowEmailCampaign] = useState(false);
+  const [resumeEmailCampaignAfterSettings, setResumeEmailCampaignAfterSettings] = useState(false);
   const [isEnrichingContacts, setIsEnrichingContacts] = useState(false);
   const [userOutreachProfile, setUserOutreachProfile] = useState<UserOutreachProfile>(defaultOutreachProfile);
   const [generatingOutreachId, setGeneratingOutreachId] = useState<number | null>(null);
@@ -822,6 +843,7 @@ export default function Home() {
       role: cleanMissionField(data.get("role"), 160),
       organization: cleanMissionField(data.get("organization"), 160),
       background: cleanMissionField(data.get("background"), 1600),
+      emailSignature: cleanMissionField(data.get("emailSignature"), 800),
       preferredLanguage: cleanMissionField(data.get("preferredLanguage"), 80) || "English",
       linkedinConnectionLimit: requestedLimit === 0 || requestedLimit === 300 ? requestedLimit : 200,
       linkedinWorkflow: requestedWorkflow === "direct_when_available" || requestedWorkflow === "either" ? requestedWorkflow : "connect_first",
@@ -829,6 +851,7 @@ export default function Home() {
     setUserOutreachProfile(profile);
     persistOutreachProfile(profile);
     setShowOutreachSettings(false);
+    if (resumeEmailCampaignAfterSettings) setShowEmailCampaign(true);
     notify("Outreach settings saved");
   };
 
@@ -1138,6 +1161,7 @@ export default function Home() {
   }, [contacts, enrichContactDetails, mission, sessionAccessToken]);
 
   const openEmailPlan = () => {
+    setResumeEmailCampaignAfterSettings(false);
     setShowEmailCampaign(true);
     const contactsMissingEmail = contacts.filter((contact) => !contact.publicEmail);
     if (contactsMissingEmail.length > 0) void enrichContactDetails(mission, contactsMissingEmail);
@@ -1345,7 +1369,7 @@ export default function Home() {
             <div className="account-menu">
               <span className="eyebrow">SIGNED IN AS</span>
               <strong>{accountEmail}</strong>
-              <button onClick={() => { setShowAccount(false); setShowOutreachSettings(true); }}>Outreach settings</button>
+              <button onClick={() => { setShowAccount(false); setResumeEmailCampaignAfterSettings(false); setShowOutreachSettings(true); }}>Outreach settings</button>
               <button onClick={() => { setShowAccount(false); setRecoveryMode(true); }}>Change password</button>
               <button onClick={signOut}>Sign out</button>
             </div>
@@ -1391,6 +1415,7 @@ export default function Home() {
           isGenerating={generatingOutreachId === selected.id}
           isEnrichingContacts={isEnrichingContacts && !selected.contactDetailsCheckedAt}
           linkedinConnectionLimit={userOutreachProfile.linkedinConnectionLimit}
+          emailSignature={resolvedEmailSignature(userOutreachProfile)}
           onClose={() => setSelected(null)}
           onCopy={copyText}
           onGenerate={() => void generateOutreach(selected, true)}
@@ -1401,7 +1426,7 @@ export default function Home() {
       {showOutreachSettings && (
         <OutreachSettingsModal
           profile={userOutreachProfile}
-          onClose={() => setShowOutreachSettings(false)}
+          onClose={() => { setShowOutreachSettings(false); setResumeEmailCampaignAfterSettings(false); }}
           onSave={saveOutreachSettings}
         />
       )}
@@ -1413,7 +1438,13 @@ export default function Home() {
           contacts={contacts}
           profile={userOutreachProfile}
           isEnrichingContacts={isEnrichingContacts}
-          onClose={() => setShowEmailCampaign(false)}
+          autoOpenLatestDraft={resumeEmailCampaignAfterSettings}
+          onClose={() => { setShowEmailCampaign(false); setResumeEmailCampaignAfterSettings(false); }}
+          onOpenOutreachSettings={() => {
+            setShowEmailCampaign(false);
+            setResumeEmailCampaignAfterSettings(true);
+            setShowOutreachSettings(true);
+          }}
           onNotify={notify}
         />
       )}
@@ -1795,13 +1826,15 @@ function proposedSendTimes(startDate: string, time: string, count: number, daily
   return times;
 }
 
-function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichingContacts, onClose, onNotify }: {
+function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichingContacts, autoOpenLatestDraft, onClose, onOpenOutreachSettings, onNotify }: {
   accessToken: string;
   mission: Mission;
   contacts: Contact[];
   profile: UserOutreachProfile;
   isEnrichingContacts: boolean;
+  autoOpenLatestDraft: boolean;
   onClose: () => void;
+  onOpenOutreachSettings: () => void;
   onNotify: (message: string) => void;
 }) {
   const eligible = useMemo(() => contacts.filter((contact) => Boolean(contact.publicEmail)), [contacts]);
@@ -1818,7 +1851,9 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichi
   const [loading, setLoading] = useState(true);
   const [working, setWorking] = useState(false);
   const [error, setError] = useState("");
+  const [showSignatureWarning, setShowSignatureWarning] = useState(false);
   const timezone = Intl.DateTimeFormat().resolvedOptions().timeZone || "Europe/Madrid";
+  const emailSignature = resolvedEmailSignature(profile);
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -1834,15 +1869,24 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichi
       const response = await fetch("/api/email/campaigns", { headers: { authorization: `Bearer ${accessToken}` }, cache: "no-store" });
       const result = await response.json() as { connection?: GmailConnection; campaigns?: EmailCampaign[]; emails?: ScheduledEmail[]; error?: string };
       if (!response.ok) throw new Error(result.error || "Email scheduling could not be loaded.");
+      const nextCampaigns = result.campaigns ?? [];
+      const nextEmails = result.emails ?? [];
       setConnection(result.connection ?? { connected: false, email: "", connectedAt: "" });
-      setCampaigns(result.campaigns ?? []);
-      setSavedEmails(result.emails ?? []);
+      setCampaigns(nextCampaigns);
+      setSavedEmails(nextEmails);
+      if (autoOpenLatestDraft) {
+        const latestDraft = nextCampaigns.find((campaign) => campaign.mission_id === mission.id && campaign.status === "draft");
+        if (latestDraft) {
+          setActiveCampaign(latestDraft);
+          setActiveEmails(nextEmails.filter((email) => email.campaign_id === latestDraft.id));
+        }
+      }
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : "Email scheduling could not be loaded.");
     } finally {
       setLoading(false);
     }
-  }, [accessToken]);
+  }, [accessToken, autoOpenLatestDraft, mission.id]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => { void loadCampaigns(); }, 0);
@@ -1870,7 +1914,7 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichi
       const response = await fetch("/api/email/campaigns", {
         method: "POST",
         headers: { authorization: `Bearer ${accessToken}`, "content-type": "application/json" },
-        body: JSON.stringify({ action, campaignId }),
+        body: JSON.stringify({ action, campaignId, emailSignature }),
       });
       const result = await response.json() as { error?: string };
       if (!response.ok) throw new Error(result.error || "The email plan could not be updated.");
@@ -1946,6 +1990,7 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichi
           name: `${mission.title.slice(0, 110)} · ${new Date().toLocaleDateString()}`,
           timezone,
           dailyLimit,
+          emailSignature,
           emails: proposedEmails,
         }),
       });
@@ -1966,6 +2011,15 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichi
     setActiveEmails(savedEmails.filter((email) => email.campaign_id === campaign.id));
   };
 
+  const requestAuthorization = () => {
+    if (!activeCampaign) return;
+    if (!emailSignature) {
+      setShowSignatureWarning(true);
+      return;
+    }
+    void campaignAction("approve", activeCampaign.id);
+  };
+
   return (
     <div className="modal-layer email-campaign-layer" role="dialog" aria-modal="true" aria-labelledby="email-plan-title">
       <button className="modal-backdrop" onClick={onClose} aria-label="Close" />
@@ -1983,6 +2037,16 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichi
               {connection?.connected ? <button onClick={() => void campaignAction("disconnect")} disabled={working}>Disconnect</button> : <button className="primary-button" onClick={connectGmail} disabled={working}>{working ? "Opening Google…" : "Connect Gmail"}<span>→</span></button>}
             </div>
 
+            {connection?.connected && (
+              <div className={`email-signature-status ${emailSignature ? "ready" : "missing"}`}>
+                <div>
+                  <span className="eyebrow">SENDER SIGNATURE</span>
+                  {emailSignature ? <><strong>Added to every email</strong><pre>{emailSignature}</pre></> : <><strong>No sender signature yet</strong><p>Add your name before authorizing. Role, organization and a custom sign-off are optional.</p></>}
+                </div>
+                <button type="button" onClick={onOpenOutreachSettings}>{emailSignature ? "Edit sender details" : "Add sender details"}</button>
+              </div>
+            )}
+
             {activeCampaign ? (
               <div className="campaign-review">
                 <div className="campaign-review-heading"><button onClick={() => { setActiveCampaign(null); setActiveEmails([]); }}>← Back</button><span className={`campaign-status status-${activeCampaign.status}`}>{activeCampaign.status}</span></div>
@@ -1996,7 +2060,7 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichi
                     </details>
                   ))}
                 </div>
-                {activeCampaign.status === "draft" && <div className="authorization-box"><p><strong>Final authorization</strong>By continuing, you authorize 100 Calls to send these {activeEmails.length} emails from {connection?.email} at the listed times. You can cancel the campaign before an email is sent.</p><button className="primary-button" onClick={() => void campaignAction("approve", activeCampaign.id)} disabled={working}>{working ? "Authorizing…" : `Authorize and schedule ${activeEmails.length} emails`} <span>→</span></button></div>}
+                {activeCampaign.status === "draft" && <div className="authorization-box"><p><strong>Final authorization</strong>By continuing, you authorize 100 Calls to send these {activeEmails.length} emails from {connection?.email} at the listed times. Your current sender signature will be added to every unsent draft. You can cancel the campaign before an email is sent.</p><button className="primary-button" onClick={requestAuthorization} disabled={working}>{working ? "Authorizing…" : `Authorize and schedule ${activeEmails.length} emails`} <span>→</span></button></div>}
                 {activeCampaign.status === "approved" && <div className="campaign-controls"><button onClick={() => void campaignAction("pause", activeCampaign.id)} disabled={working}>Pause campaign</button><button onClick={() => void campaignAction("cancel", activeCampaign.id)} disabled={working}>Cancel unsent emails</button></div>}
                 {activeCampaign.status === "paused" && <div className="campaign-controls"><button className="primary-button" onClick={() => void campaignAction("resume", activeCampaign.id)} disabled={working}>Resume campaign <span>→</span></button><button onClick={() => void campaignAction("cancel", activeCampaign.id)} disabled={working}>Cancel unsent emails</button></div>}
               </div>
@@ -2018,6 +2082,17 @@ function EmailCampaignModal({ accessToken, mission, contacts, profile, isEnrichi
               <section className="existing-campaigns"><span className="eyebrow">SAVED EMAIL PLANS</span>{campaigns.filter((campaign) => campaign.mission_id === mission.id).map((campaign) => <button key={campaign.id} onClick={() => openCampaign(campaign)}><span><strong>{campaign.name}</strong><small>{savedEmails.filter((email) => email.campaign_id === campaign.id).length} emails · {new Date(campaign.created_at).toLocaleDateString()}</small></span><b className={`campaign-status status-${campaign.status}`}>{campaign.status}</b><i>→</i></button>)}</section>
             )}
           </>
+        )}
+        {showSignatureWarning && (
+          <div className="signature-warning-layer" role="alertdialog" aria-modal="true" aria-labelledby="signature-warning-title">
+            <button type="button" className="signature-warning-backdrop" onClick={() => setShowSignatureWarning(false)} aria-label="Close signature warning" />
+            <section className="signature-warning-card">
+              <span className="step-label">SIGNATURE REQUIRED</span>
+              <h3 id="signature-warning-title">These emails have no sender signature.</h3>
+              <p>Add your name before authorizing. Your role, organization or a custom sign-off are optional. The signature will be added to every unsent draft without rebuilding the campaign.</p>
+              <div className="modal-actions"><button type="button" className="secondary-button" onClick={() => setShowSignatureWarning(false)}>Review draft</button><button type="button" className="primary-button" onClick={onOpenOutreachSettings}>Add sender details <span>→</span></button></div>
+            </section>
+          </div>
         )}
       </section>
     </div>
@@ -2367,12 +2442,13 @@ function OutreachDraftCard({ label, meta, text, onCopy }: {
   );
 }
 
-function ContactDrawer({ contact, isContacted, isGenerating, isEnrichingContacts, linkedinConnectionLimit, onClose, onCopy, onGenerate, onContact }: {
+function ContactDrawer({ contact, isContacted, isGenerating, isEnrichingContacts, linkedinConnectionLimit, emailSignature, onClose, onCopy, onGenerate, onContact }: {
   contact: Contact;
   isContacted: boolean;
   isGenerating: boolean;
   isEnrichingContacts: boolean;
   linkedinConnectionLimit: 0 | 200 | 300;
+  emailSignature: string;
   onClose: () => void;
   onCopy: (text: string, label: string) => void;
   onGenerate: () => void;
@@ -2380,6 +2456,7 @@ function ContactDrawer({ contact, isContacted, isGenerating, isEnrichingContacts
 }) {
   const fallbackMessage = contact.message ?? `Hi ${contact.name.split(" ")[0]}, I'm researching this problem and your experience at ${contact.company} feels especially relevant. Would you be open to a brief conversation?`;
   const outreach = contact.outreach;
+  const signedEmailBody = outreach ? appendEmailSignature(outreach.emailBody, emailSignature) : "";
   const hasEmail = Boolean(contact.publicEmail && outreach?.emailBody);
   const hasLinkedInConnection = Boolean(contact.linkedinUrl && outreach?.linkedinConnectionMessage && linkedinConnectionLimit > 0);
   const hasLinkedInDirect = Boolean(contact.linkedinUrl && outreach?.linkedinDirectMessage);
@@ -2412,7 +2489,7 @@ function ContactDrawer({ contact, isContacted, isGenerating, isEnrichingContacts
           {isGenerating && <div className="outreach-loading"><i className="spinner dark" /><span>Using your mission context, profile and this person’s role…</span></div>}
           {!isGenerating && outreach && (
             <div className="outreach-draft-list">
-              {hasEmail && <OutreachDraftCard label="Email" meta={outreach.emailSubject} text={`Subject: ${outreach.emailSubject}\n\n${outreach.emailBody}`} onCopy={onCopy} />}
+              {hasEmail && <OutreachDraftCard label="Email" meta={outreach.emailSubject} text={`Subject: ${outreach.emailSubject}\n\n${signedEmailBody}`} onCopy={onCopy} />}
               {hasLinkedInConnection && <OutreachDraftCard label="LinkedIn connection note" meta={`${outreach.linkedinConnectionMessage.length} / ${linkedinConnectionLimit} characters`} text={outreach.linkedinConnectionMessage} onCopy={onCopy} />}
               {hasLinkedInDirect && <OutreachDraftCard label="LinkedIn direct message" meta="For an existing connection or message access" text={outreach.linkedinDirectMessage} onCopy={onCopy} />}
               {hasContactForm && <OutreachDraftCard label="Public contact form" meta={contact.contactMethod} text={outreach.contactFormMessage} onCopy={onCopy} />}
@@ -2441,12 +2518,14 @@ function OutreachSettingsModal({ profile, onClose, onSave }: {
         <h2 id="outreach-settings-title">Give each message a credible sender.</h2>
         <p className="modal-intro">These details apply across missions. Mission-specific details belong in each mission’s context box.</p>
         <div className="settings-grid">
-          <label>Your name<input name="name" maxLength={120} defaultValue={profile.name} placeholder="Martí Massó" /></label>
+          <label>Your name<input name="name" required maxLength={120} defaultValue={profile.name} placeholder="Martí Massó" /></label>
           <label>Your role<input name="role" maxLength={160} defaultValue={profile.role} placeholder="Founder, researcher, student…" /></label>
           <label>Organization<input name="organization" maxLength={160} defaultValue={profile.organization} placeholder="Company, university or independent" /></label>
           <label>Message language<input name="preferredLanguage" maxLength={80} defaultValue={profile.preferredLanguage} placeholder="English, Spanish, match recipient…" /></label>
         </div>
         <label>Your background and credibility<textarea name="background" maxLength={1600} defaultValue={profile.background} rows={4} placeholder="Relevant experience, projects, domain knowledge, shared communities or links that can truthfully strengthen an introduction." /></label>
+        <label>Email signature<textarea name="emailSignature" maxLength={800} defaultValue={profile.emailSignature} rows={3} placeholder={profile.name ? `${profile.name}\n${[profile.role, profile.organization].filter(Boolean).join(" · ")}` : "Your name\nRole · Organization"} /></label>
+        <p className="settings-helper">Optional. Leave this blank and 100 Calls will build the signature from your name, role and organization. It is appended to emails deterministically and never invented by AI.</p>
         <div className="settings-grid">
           <label>LinkedIn connection note allowance<select name="linkedinConnectionLimit" defaultValue={profile.linkedinConnectionLimit}><option value="0">No connection note</option><option value="200">Up to 200 characters</option><option value="300">Up to 300 characters</option></select></label>
           <label>Preferred LinkedIn approach<select name="linkedinWorkflow" defaultValue={profile.linkedinWorkflow}><option value="connect_first">Connect first, then follow up</option><option value="direct_when_available">Direct message when available</option><option value="either">Recommend the best option</option></select></label>

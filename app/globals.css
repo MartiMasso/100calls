@@ -359,6 +359,7 @@ h1 { max-width: 810px; margin: 8px 0 34px; font-size: clamp(40px, 5vw, 66px); li
 .settings-modal { width: min(780px, 100%); }
 .settings-modal h2 { margin-bottom: 12px; }
 .settings-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
+.settings-helper { margin: -9px 0 16px; color: var(--muted); font-size: 9px; line-height: 1.5; }
 .mission-edit-note { margin: 20px 0 0; border-left: 3px solid var(--orange); padding-left: 12px; color: var(--muted); font-size: 10px; line-height: 1.5; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 10px; margin-top: 28px; }
 .secondary-button { border: 1px solid var(--ink); background: transparent; color: var(--ink); padding: 0 18px; font-size: 12px; font-weight: 900; }
@@ -653,6 +654,14 @@ h1 { max-width: 810px; margin: 8px 0 34px; font-size: clamp(40px, 5vw, 66px); li
 .gmail-connection p strong { font-size: 12px; }
 .gmail-connection p small { color: var(--muted); font-size: 9px; }
 .gmail-connection > button:not(.primary-button) { border: 0; border-bottom: 1px solid var(--ink); background: transparent; color: var(--ink); padding: 3px 0; font-size: 9px; font-weight: 900; }
+.email-signature-status { display: flex; align-items: center; justify-content: space-between; gap: 20px; border: 1px solid var(--line); border-top: 0; background: white; padding: 14px 18px; }
+.email-signature-status.ready { background: #fafcef; }
+.email-signature-status.missing { border-color: #e0a28f; background: #fff0ea; }
+.email-signature-status > div { display: grid; gap: 4px; }
+.email-signature-status strong { font-size: 11px; }
+.email-signature-status p { margin: 0; color: var(--muted); font-size: 9px; line-height: 1.45; }
+.email-signature-status pre { margin: 2px 0 0; color: #515663; font-family: inherit; font-size: 10px; line-height: 1.45; white-space: pre-wrap; }
+.email-signature-status > button { flex: 0 0 auto; border: 0; border-bottom: 1px solid var(--ink); background: transparent; color: var(--ink); padding: 3px 0; font-size: 9px; font-weight: 900; }
 .email-plan-form { margin-top: 20px; }
 .email-plan-section { border: 1px solid var(--line); background: white; padding: 18px; }
 .email-plan-section + .email-plan-section { border-top: 0; }
@@ -704,6 +713,11 @@ h1 { max-width: 810px; margin: 8px 0 34px; font-size: clamp(40px, 5vw, 66px); li
 .authorization-box { display: flex; align-items: center; justify-content: space-between; gap: 24px; margin-top: 16px; border: 1.5px solid var(--ink); background: var(--navy); color: white; padding: 18px; }
 .authorization-box p { max-width: 620px; display: grid; gap: 5px; margin: 0; color: #c9cfdb; font-size: 10px; line-height: 1.5; }
 .authorization-box p strong { color: white; font-size: 13px; }
+.signature-warning-layer { position: fixed; z-index: 130; inset: 0; display: grid; place-items: center; padding: 20px; }
+.signature-warning-backdrop { position: absolute; inset: 0; width: 100%; border: 0; background: rgba(8,15,31,.72); }
+.signature-warning-card { position: relative; width: min(540px, 100%); border: 1.5px solid var(--ink); background: var(--paper); padding: clamp(26px, 5vw, 44px); box-shadow: 9px 9px 0 var(--orange); }
+.signature-warning-card h3 { margin: 10px 0 14px; font-size: clamp(25px, 4vw, 35px); line-height: 1.05; letter-spacing: -.04em; }
+.signature-warning-card > p { margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
 .campaign-controls { display: flex; justify-content: flex-end; gap: 10px; margin-top: 14px; }
 .campaign-controls > button:not(.primary-button) { border: 1px solid var(--ink); background: transparent; color: var(--ink); padding: 12px 16px; font-size: 9px; font-weight: 900; }
 .existing-campaigns { display: grid; gap: 0; margin-top: 28px; }
@@ -779,7 +793,7 @@ h1 { max-width: 810px; margin: 8px 0 34px; font-size: clamp(40px, 5vw, 66px); li
   .candidate-value { grid-column: 2 / -1; }
   .candidate-links { grid-column: 2; }
   .candidate-row .row-arrow { grid-column: 3; grid-row: 1; }
-  .gmail-connection, .authorization-box { align-items: stretch; flex-direction: column; }
+  .gmail-connection, .email-signature-status, .authorization-box { align-items: stretch; flex-direction: column; }
   .email-plan-section > header { align-items: flex-start; flex-direction: column; }
   .email-recipient-grid, .email-cadence-grid { grid-template-columns: 1fr; }
   .campaign-review-heading { padding-right: 42px; }
