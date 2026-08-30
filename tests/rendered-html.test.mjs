@@ -47,6 +47,12 @@ test("keeps the product flow unified, persistent, and bounded", async () => {
   assert.match(page, /Build first 50 candidates/);
   assert.match(page, /Expand list/);
   assert.match(page, /Save & update strategy/);
+  assert.match(page, /NEW MISSION · MARKET DISCOVERY/);
+  assert.match(page, /Market Discovery/);
+  assert.match(page, /Funding/);
+  assert.match(page, /Sales/);
+  assert.match(page, /In development/);
+  assert.match(page, /className="mission-type-option" aria-pressed="false" disabled/);
   assert.doesNotMatch(page, /const tabs:/);
 
   assert.match(css, /\.mission-flow/);

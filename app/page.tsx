@@ -2766,8 +2766,30 @@ function MissionModal({ mode, mission, onClose, onSave }: {
       <button className="modal-backdrop" onClick={onClose} aria-label="Close" />
       <form className="mission-modal" onSubmit={onSave}>
         <button type="button" className="close-button" onClick={onClose} aria-label="Close modal">×</button>
-        <span className="step-label">{editing ? "EDIT MISSION" : "NEW MISSION · STEP 1 OF 1"}</span>
+        <span className="step-label">{editing ? "EDIT MISSION" : "NEW MISSION · MARKET DISCOVERY"}</span>
         <h2 id="mission-title">{editing ? "Refine this mission without losing the rest." : "Turn your idea into a question the market can answer."}</h2>
+        {!editing && (
+          <div className="mission-type-selector" role="group" aria-label="Mission type">
+            <button type="button" className="mission-type-option selected" aria-pressed="true">
+              <span className="mission-type-number">01</span>
+              <strong>Market Discovery</strong>
+              <small>Validate a problem, market or hypothesis through targeted conversations.</small>
+              <em>Available</em>
+            </button>
+            <button type="button" className="mission-type-option" aria-pressed="false" disabled>
+              <span className="mission-type-number">02</span>
+              <strong>Funding</strong>
+              <small>Map investors, grants and the right routes to capital.</small>
+              <em>In development</em>
+            </button>
+            <button type="button" className="mission-type-option" aria-pressed="false" disabled>
+              <span className="mission-type-number">03</span>
+              <strong>Sales</strong>
+              <small>Build and work through a qualified sales pipeline.</small>
+              <em>In development</em>
+            </button>
+          </div>
+        )}
         <label>What do you want to validate?<textarea name="idea" required maxLength={600} defaultValue={mission?.title ?? ""} rows={3} /></label>
         <label>Which profiles do you need to speak with?<input name="audience" required maxLength={400} defaultValue={mission?.audience ?? ""} /></label>
         <label>What do you need to learn?<input name="question" required maxLength={400} defaultValue={mission?.question ?? ""} /></label>
