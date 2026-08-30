@@ -93,6 +93,10 @@ Only `gmail.send` is requested; the application cannot read the inbox. Refresh
 tokens are encrypted before storage. Active campaigns are automatically paused
 when Gmail is disconnected.
 
+Authorized emails stay in the 100 Calls database queue until their delivery
+time. Gmail's API sends them at that moment, so future items do not appear in
+Gmail's native **Scheduled** folder; they appear in **Sent** after delivery.
+
 Run `supabase/migrations/20260829190000_create_gmail_campaigns.sql` in the
 Supabase SQL Editor before testing the connection. After the application is
 deployed, set the same random `EMAIL_SCHEDULER_SECRET` in Vercel and in
